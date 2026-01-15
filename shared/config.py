@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 from shared.constants import (
+    DEFAULT_BOT_POLL_INTERVAL,
     DEFAULT_BOT_HEALTH_PORT,
     DEFAULT_LOG_LEVEL,
     DEFAULT_PAGE_SIZE,
@@ -34,6 +35,7 @@ ENV_TELEGRAM_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
 ENV_LOG_LEVEL = "LOG_LEVEL"
 ENV_WORKER_HEALTH_PORT = "WORKER_HEALTH_PORT"
 ENV_BOT_HEALTH_PORT = "BOT_HEALTH_PORT"
+ENV_BOT_POLL_INTERVAL = "BOT_POLL_INTERVAL"
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,7 @@ class BotConfig:
     telegram: TelegramConfig
     log_level: str
     health_port: int
+    poll_interval: int
 
 
 def load_environment() -> None:
@@ -178,4 +181,5 @@ def load_bot_config() -> BotConfig:
         telegram=telegram,
         log_level=os.getenv(ENV_LOG_LEVEL, DEFAULT_LOG_LEVEL),
         health_port=_get_env_int(ENV_BOT_HEALTH_PORT, DEFAULT_BOT_HEALTH_PORT),
+        poll_interval=_get_env_int(ENV_BOT_POLL_INTERVAL, DEFAULT_BOT_POLL_INTERVAL),
     )

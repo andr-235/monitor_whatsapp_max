@@ -9,6 +9,7 @@
 - Скопируйте `.env.example` в `.env` и заполните токены/доступы.
 - Установите зависимости: `poetry install`.
 - Запустите миграции: `poetry run alembic -c database/alembic.ini upgrade head`.
+ - Бот опрашивает БД и автоматически отправляет совпадения; интервал задается `BOT_POLL_INTERVAL`.
 
 ## Запуск
 - Сервис `worker`: `poetry run worker`

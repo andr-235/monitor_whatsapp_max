@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import logging
 from datetime import datetime
 from typing import Dict
@@ -11,6 +12,7 @@ from aiogram import Bot, Dispatcher
 
 from bot.handlers import router as bot_router
 from bot.keyword_service import KeywordService
+from bot.notifier import run_notifier
 from shared.config import load_bot_config, load_environment
 from shared.constants import DATETIME_FORMAT
 from shared.db import Database
@@ -49,9 +51,16 @@ async def _run_bot() -> None:
     health_server = HealthServer("0.0.0.0", config.health_port, health_status)
     health_server.start()
 
+    stop_event = asyncio.Event()
+    notifier_task = asyncio.create_task(run_notifier(bot, db, config.poll_interval, stop_event))
+
     try:
         await dispatcher.start_polling(bot, db=db, keyword_service=keyword_service)
     finally:
+        stop_event.set()
+        notifier_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await notifier_task
         health_server.stop()
         await bot.session.close()
         db.close()

@@ -40,11 +40,18 @@ def get_recent_messages(db: Database, limit: int, offset: int) -> List[MessageVi
     """Получить последние сообщения для отображения."""
 
     rows = db.fetch_all(
-        "SELECT sender, timestamp, text FROM messages ORDER BY timestamp DESC LIMIT %s OFFSET %s",
+        "SELECT id, sender, timestamp, text, metadata "
+        "FROM messages ORDER BY timestamp DESC LIMIT %s OFFSET %s",
         (limit, offset),
     )
     return [
-        MessageView(sender=row["sender"], timestamp=row["timestamp"], text=row["text"])
+        MessageView(
+            db_id=row["id"],
+            sender=row["sender"],
+            timestamp=row["timestamp"],
+            text=row["text"],
+            metadata=row["metadata"],
+        )
         for row in rows
     ]
 
@@ -57,7 +64,7 @@ def search_messages_by_keywords(
     patterns = [f"%{keyword}%" for keyword in keywords]
     rows = db.fetch_all(
         ""
-        "SELECT sender, timestamp, text "
+        "SELECT id, sender, timestamp, text, metadata "
         "FROM messages "
         "WHERE COALESCE(text, '') ILIKE ANY(%s) "
         "ORDER BY timestamp DESC "
@@ -65,9 +72,51 @@ def search_messages_by_keywords(
         (patterns, limit, offset),
     )
     return [
-        MessageView(sender=row["sender"], timestamp=row["timestamp"], text=row["text"])
+        MessageView(
+            db_id=row["id"],
+            sender=row["sender"],
+            timestamp=row["timestamp"],
+            text=row["text"],
+            metadata=row["metadata"],
+        )
         for row in rows
     ]
+
+
+def get_messages_by_keywords_between_ids(
+    db: Database, keywords: Sequence[str], start_id: int, end_id: int, limit: int
+) -> List[MessageView]:
+    """Получить сообщения по ключевым словам в диапазоне id."""
+
+    patterns = [f"%{keyword}%" for keyword in keywords]
+    rows = db.fetch_all(
+        ""
+        "SELECT id, sender, timestamp, text, metadata "
+        "FROM messages "
+        "WHERE id > %s AND id <= %s AND COALESCE(text, '') ILIKE ANY(%s) "
+        "ORDER BY id ASC "
+        "LIMIT %s",
+        (start_id, end_id, patterns, limit),
+    )
+    return [
+        MessageView(
+            db_id=row["id"],
+            sender=row["sender"],
+            timestamp=row["timestamp"],
+            text=row["text"],
+            metadata=row["metadata"],
+        )
+        for row in rows
+    ]
+
+
+def get_max_message_id(db: Database) -> int:
+    """Получить максимальный id сообщения."""
+
+    value = db.fetch_value("SELECT COALESCE(MAX(id), 0) FROM messages")
+    if value is None:
+        return 0
+    return int(value)
 
 
 def get_latest_message_timestamp(db: Database) -> Optional[int]:

@@ -31,7 +31,12 @@ from bot.keyword_service import KeywordService
 from shared.constants import DEFAULT_RECENT_LIMIT, PAGE_SIZE, SEARCH_LIMIT
 from shared.db import Database
 from shared.models import MessageView
-from shared.repositories.messages import get_recent_messages, search_messages_by_keywords
+from shared.repositories import user_state as state_repo
+from shared.repositories.messages import (
+    get_max_message_id,
+    get_recent_messages,
+    search_messages_by_keywords,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +95,7 @@ async def recent(message: Message, command: CommandObject, db: Database) -> None
 
 @router.message(Command("add_keyword"))
 async def add_keyword(
-    message: Message, command: CommandObject, keyword_service: KeywordService
+    message: Message, command: CommandObject, keyword_service: KeywordService, db: Database
 ) -> None:
     """Обработать команду /add_keyword."""
 
@@ -111,6 +116,9 @@ async def add_keyword(
         return
 
     await message.reply(KEYWORD_ADDED_MESSAGE if added else KEYWORD_EXISTS_MESSAGE)
+
+    if added:
+        await _initialize_user_state(db, user_id)
 
 
 @router.message(Command("remove_keyword"))
@@ -198,3 +206,14 @@ async def _send_paginated(message: Message, messages: List[MessageView]) -> None
     for offset in range(0, len(messages), PAGE_SIZE):
         page = messages[offset : offset + PAGE_SIZE]
         await message.reply(format_message_page(page))
+
+
+async def _initialize_user_state(db: Database, user_id: int) -> None:
+    try:
+        last_seen = await _run_db(state_repo.get_last_seen_message_id, db, user_id)
+        if last_seen > 0:
+            return
+        max_id = await _run_db(get_max_message_id, db)
+        await _run_db(state_repo.upsert_last_seen_message_id, db, user_id, max_id)
+    except psycopg2.Error as exc:
+        logger.warning("Не удалось инициализировать состояние пользователя %s: %s", user_id, exc)

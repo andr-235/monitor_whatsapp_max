@@ -23,6 +23,8 @@ class MessageRecord:
 class MessageView:
     """Легкая проекция для отображения сообщений в боте."""
 
+    db_id: int
     sender: str
     timestamp: datetime
     text: Optional[str]
+    metadata: Optional[Dict[str, Any]]

@@ -27,6 +27,7 @@
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 - `TELEGRAM_BOT_TOKEN`
 - `LOG_LEVEL`
+- `BOT_POLL_INTERVAL` — интервал опроса БД ботом (по умолчанию 60 секунд)
 
 Опционально:
 - `WHAPI_REQUEST_TIMEOUT`, `WHAPI_PAGE_SIZE`, `WHAPI_INCLUDE_SYSTEM_MESSAGES`
@@ -52,11 +53,11 @@ docker-compose up --build
 
 ## Команды Telegram-бота
 - `/start` — справка и описание
-- `/recent [N]` — показать последние N сообщений (по умолчанию 10), по 10 на страницу
 - `/add_keyword <слово>` — добавить ключевое слово
 - `/remove_keyword <слово>` — удалить ключевое слово
 - `/list_keywords` — список активных ключевых слов
 - `/search` — поиск по всем ключевым словам (OR, ILIKE)
+- `/recent [N]` — показать последние N сообщений (по умолчанию 10), по 10 на страницу
 
 ## Схема БД
 `messages`:
@@ -81,6 +82,11 @@ docker-compose up --build
 - `created_at` TIMESTAMP DEFAULT NOW()
 - уникальность на (`user_id`, `keyword`)
 
+`user_state`:
+- `user_id` BIGINT PRIMARY KEY
+- `last_seen_message_id` INTEGER NOT NULL
+- `updated_at` TIMESTAMP DEFAULT NOW()
+
 ## Мониторинг и проверка состояния
 Каждый сервис отдает `/health`:
 - Сервис `worker`: включает время последнего успешного опроса и размер буфера.
@@ -88,3 +94,6 @@ docker-compose up --build
 
 ## Интервал опроса
 Интервал по умолчанию — 10 минут (`WHAPI_POLL_INTERVAL=600`).
+
+## Авто-уведомления
+Бот опрашивает БД и автоматически отправляет новые сообщения, которые совпадают с ключевыми словами пользователя. Интервал опроса настраивается через `BOT_POLL_INTERVAL`.

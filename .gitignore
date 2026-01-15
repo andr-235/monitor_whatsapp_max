@@ -1,0 +1,86 @@
+########################
+# Python
+########################
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.pyright/
+
+########################
+# Virtual environments
+########################
+.venv/
+venv/
+ENV/
+env/
+
+########################
+# Poetry
+########################
+poetry.toml
+# poetry.lock  # ❗ ОСТАВЬ ЗАКОММЕНТИРОВАННЫМ, если хочешь фиксировать версии
+
+########################
+# Environment variables
+########################
+.env
+.env.*
+!.env.example
+
+########################
+# Logs
+########################
+*.log
+logs/
+*.out
+
+########################
+# Alembic
+########################
+alembic/*.pyc
+alembic/versions/*.pyc
+
+########################
+# Docker
+########################
+docker-compose.override.yml
+*.pid
+
+########################
+# PostgreSQL data
+########################
+pgdata/
+postgres-data/
+
+########################
+# OS / Editor
+########################
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*.bak
+*.tmp
+
+########################
+# Build artifacts
+########################
+dist/
+build/
+*.whl
+
+########################
+# Coverage / Reports
+########################
+htmlcov/
+.coverage
+coverage.xml

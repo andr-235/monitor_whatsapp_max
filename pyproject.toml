@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "monitor-whatsapp-max"
+version = "0.1.0"
+description = "Сервис опроса WhatsApp и Telegram-бот"
+authors = ["Ваше Имя <you@example.com>"]
+packages = [
+    { include = "worker" },
+    { include = "bot" },
+    { include = "shared" },
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+httpx = "^0.27.0"
+psycopg2-binary = "^2.9.9"
+aiogram = "^3.4.1"
+python-dotenv = "^1.0.1"
+alembic = "^1.13.1"
+SQLAlchemy = "^2.0.25"
+
+[tool.poetry.scripts]
+worker = "worker.main:main"
+bot = "bot.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

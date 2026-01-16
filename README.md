@@ -2,7 +2,7 @@
 
 ## Обзор
 Проект содержит два независимых сервиса:
-- `worker`: опрашивает WhatsApp API (gate.whapi.cloud) и сохраняет сообщения в PostgreSQL.
+- `worker`: опрашивает WhatsApp API (Wappi) и сохраняет сообщения в PostgreSQL.
 - `bot`: Telegram-бот, который ищет и пагинирует сообщения из PostgreSQL.
 
 Общие утилиты находятся в `shared`, миграции БД — в `database`.
@@ -23,14 +23,15 @@
 
 ## Конфигурация
 Скопируйте `.env.example` в `.env` и заполните значения:
-- `WHAPI_API_URL`, `WHAPI_API_TOKEN`, `WHAPI_POLL_INTERVAL`
+- `WAPPI_API_URL`, `WAPPI_API_TOKEN`, `WAPPI_PROFILE_ID`, `WAPPI_POLL_INTERVAL`
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
 - `TELEGRAM_BOT_TOKEN`
 - `LOG_LEVEL`
 - `BOT_POLL_INTERVAL` — интервал опроса БД ботом (по умолчанию 60 секунд)
 
 Опционально:
-- `WHAPI_REQUEST_TIMEOUT`, `WHAPI_PAGE_SIZE`, `WHAPI_INCLUDE_SYSTEM_MESSAGES`
+- `WAPPI_REQUEST_TIMEOUT`, `WAPPI_PAGE_SIZE`, `WAPPI_INCLUDE_SYSTEM_MESSAGES`
+- `WAPPI_FORCE_FULL_SYNC` — если true, worker выполнит полную синхронизацию один раз при старте
 - `WORKER_HEALTH_PORT`, `BOT_HEALTH_PORT`
 
 ## Миграции БД
@@ -93,7 +94,7 @@ docker-compose up --build
 - Сервис `bot`: включает время запуска и доступность БД.
 
 ## Интервал опроса
-Интервал по умолчанию — 10 минут (`WHAPI_POLL_INTERVAL=600`).
+Интервал по умолчанию — 10 минут (`WAPPI_POLL_INTERVAL=600`).
 
 ## Авто-уведомления
 Бот опрашивает БД и автоматически отправляет новые сообщения, которые совпадают с ключевыми словами пользователя. Интервал опроса настраивается через `BOT_POLL_INTERVAL`.

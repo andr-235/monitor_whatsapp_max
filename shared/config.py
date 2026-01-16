@@ -17,12 +17,14 @@ from shared.constants import (
     DEFAULT_WORKER_HEALTH_PORT,
 )
 
-ENV_WHAPI_API_URL = "WHAPI_API_URL"
-ENV_WHAPI_API_TOKEN = "WHAPI_API_TOKEN"
-ENV_WHAPI_POLL_INTERVAL = "WHAPI_POLL_INTERVAL"
-ENV_WHAPI_REQUEST_TIMEOUT = "WHAPI_REQUEST_TIMEOUT"
-ENV_WHAPI_PAGE_SIZE = "WHAPI_PAGE_SIZE"
-ENV_WHAPI_INCLUDE_SYSTEM = "WHAPI_INCLUDE_SYSTEM_MESSAGES"
+ENV_WAPPI_API_URL = "WAPPI_API_URL"
+ENV_WAPPI_API_TOKEN = "WAPPI_API_TOKEN"
+ENV_WAPPI_PROFILE_ID = "WAPPI_PROFILE_ID"
+ENV_WAPPI_FORCE_FULL_SYNC = "WAPPI_FORCE_FULL_SYNC"
+ENV_WAPPI_POLL_INTERVAL = "WAPPI_POLL_INTERVAL"
+ENV_WAPPI_REQUEST_TIMEOUT = "WAPPI_REQUEST_TIMEOUT"
+ENV_WAPPI_PAGE_SIZE = "WAPPI_PAGE_SIZE"
+ENV_WAPPI_INCLUDE_SYSTEM = "WAPPI_INCLUDE_SYSTEM_MESSAGES"
 
 ENV_POSTGRES_HOST = "POSTGRES_HOST"
 ENV_POSTGRES_PORT = "POSTGRES_PORT"
@@ -61,11 +63,13 @@ class DatabaseConfig:
 
 
 @dataclass(frozen=True)
-class WhapiConfig:
-    """Конфигурация WhatsApp API."""
+class WappiConfig:
+    """Конфигурация Wappi API."""
 
     api_url: str
     api_token: str
+    profile_id: str
+    full_sync_on_start: bool
     poll_interval: int
     request_timeout: int
     page_size: int
@@ -84,7 +88,7 @@ class WorkerConfig:
     """Конфигурация сервиса worker."""
 
     database: DatabaseConfig
-    whapi: WhapiConfig
+    wappi: WappiConfig
     log_level: str
     health_port: int
 
@@ -148,16 +152,18 @@ def load_database_config() -> DatabaseConfig:
     )
 
 
-def load_whapi_config() -> WhapiConfig:
-    """Загрузить конфигурацию WhatsApp API из переменных окружения."""
+def load_wappi_config() -> WappiConfig:
+    """Загрузить конфигурацию Wappi API из переменных окружения."""
 
-    return WhapiConfig(
-        api_url=_required_env(ENV_WHAPI_API_URL).rstrip("/"),
-        api_token=_required_env(ENV_WHAPI_API_TOKEN),
-        poll_interval=_get_env_int(ENV_WHAPI_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
-        request_timeout=_get_env_int(ENV_WHAPI_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
-        page_size=_get_env_int(ENV_WHAPI_PAGE_SIZE, DEFAULT_PAGE_SIZE),
-        include_system_messages=_get_env_bool(ENV_WHAPI_INCLUDE_SYSTEM, True),
+    return WappiConfig(
+        api_url=_required_env(ENV_WAPPI_API_URL).rstrip("/"),
+        api_token=_required_env(ENV_WAPPI_API_TOKEN),
+        profile_id=_required_env(ENV_WAPPI_PROFILE_ID).strip(),
+        full_sync_on_start=_get_env_bool(ENV_WAPPI_FORCE_FULL_SYNC, False),
+        poll_interval=_get_env_int(ENV_WAPPI_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+        request_timeout=_get_env_int(ENV_WAPPI_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
+        page_size=_get_env_int(ENV_WAPPI_PAGE_SIZE, DEFAULT_PAGE_SIZE),
+        include_system_messages=_get_env_bool(ENV_WAPPI_INCLUDE_SYSTEM, True),
     )
 
 
@@ -166,7 +172,7 @@ def load_worker_config() -> WorkerConfig:
 
     return WorkerConfig(
         database=load_database_config(),
-        whapi=load_whapi_config(),
+        wappi=load_wappi_config(),
         log_level=os.getenv(ENV_LOG_LEVEL, DEFAULT_LOG_LEVEL),
         health_port=_get_env_int(ENV_WORKER_HEALTH_PORT, DEFAULT_WORKER_HEALTH_PORT),
     )

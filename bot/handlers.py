@@ -26,7 +26,8 @@ from bot.constants import (
     REMOVE_KEYWORD_USAGE,
     START_MESSAGE,
 )
-from bot.formatting import format_message_page
+from bot.formatting import has_displayable_content
+from bot.message_sender import send_message_with_media
 from bot.keyword_service import KeywordService
 from shared.constants import DEFAULT_RECENT_LIMIT, PAGE_SIZE, SEARCH_LIMIT
 from shared.db import Database
@@ -86,6 +87,7 @@ async def recent(message: Message, command: CommandObject, db: Database) -> None
         await message.reply(DB_ERROR_MESSAGE)
         return
 
+    messages = [item for item in messages if has_displayable_content(item)]
     if not messages:
         await message.reply(NO_RESULTS_MESSAGE)
         return
@@ -195,6 +197,7 @@ async def search(message: Message, db: Database, keyword_service: KeywordService
         await message.reply(DB_ERROR_MESSAGE)
         return
 
+    messages = [item for item in messages if has_displayable_content(item)]
     if not messages:
         await message.reply(NO_RESULTS_MESSAGE)
         return
@@ -205,7 +208,8 @@ async def search(message: Message, db: Database, keyword_service: KeywordService
 async def _send_paginated(message: Message, messages: List[MessageView]) -> None:
     for offset in range(0, len(messages), PAGE_SIZE):
         page = messages[offset : offset + PAGE_SIZE]
-        await message.reply(format_message_page(page))
+        for item in page:
+            await send_message_with_media(message.bot, message.chat.id, item)
 
 
 async def _initialize_user_state(db: Database, user_id: int) -> None:

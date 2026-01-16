@@ -10,7 +10,8 @@ import psycopg2
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 
-from bot.formatting import format_message
+from bot.formatting import has_displayable_content
+from bot.message_sender import send_message_with_media
 from shared.constants import NOTIFY_LIMIT
 from shared.db import Database
 from shared.repositories import keywords as keyword_repo
@@ -105,8 +106,10 @@ async def _notify_user(
             break
 
         for message in messages:
+            if not has_displayable_content(message):
+                continue
             try:
-                await bot.send_message(chat_id=user_id, text=format_message(message))
+                await send_message_with_media(bot, user_id, message)
             except TelegramForbiddenError:
                 logger.info("Пользователь %s заблокировал бота", user_id)
                 return

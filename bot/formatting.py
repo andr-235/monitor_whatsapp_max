@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional
 from urllib.parse import quote
 
@@ -11,34 +12,49 @@ from shared.constants import DATETIME_FORMAT
 from shared.models import MessageView
 
 
-def format_message(message: MessageView) -> str:
+@dataclass(frozen=True)
+class MediaContent:
+    """Медиа-контент для отправки через Telegram."""
+
+    media_type: str
+    url: str
+    caption: Optional[str]
+
+
+def format_message(message: MessageView, force_links: bool = False) -> str:
     """Отформатировать одно сообщение для отображения."""
 
-    timestamp = message.timestamp.strftime(DATETIME_FORMAT)
     text = (message.text or "").strip()
     links = _extract_media_links(message.metadata)
-    media_type = _extract_media_type(message.metadata)
+    media = extract_media(message.metadata)
 
-    lines: List[str] = [
-        f"Отправитель: {message.sender}",
-        f"Время: {timestamp}",
-    ]
-
-    if media_type and media_type != "текст":
-        lines.append(f"Тип: {media_type}")
+    lines = _format_header(message)
 
     if text:
-        lines.append(f"Текст: {text}")
+        lines.append(text)
+    else:
+        caption = (media.caption or "").strip() if media else ""
+        if caption:
+            lines.append(caption)
 
-    if links:
+    if links and (force_links or (not text and media is None)):
         if len(links) == 1:
             lines.append(f"Ссылка: {links[0]}")
         else:
             lines.append("Ссылки:\n" + "\n".join(links))
 
-    if not text and not links:
-        lines.append("Текст: <нет текста>")
+    return "\n".join(lines)
 
+
+def format_message_caption(message: MessageView, fallback_caption: Optional[str]) -> str:
+    """Сформировать подпись для медиа-сообщения."""
+
+    text = (message.text or "").strip()
+    caption = text or (fallback_caption or "").strip()
+
+    lines = _format_header(message)
+    if caption:
+        lines.append(caption)
     return "\n".join(lines)
 
 
@@ -49,15 +65,70 @@ def format_message_page(messages: Iterable[MessageView]) -> str:
     return "\n\n".join(items)
 
 
+def _format_header(message: MessageView) -> List[str]:
+    timestamp = message.timestamp.strftime(DATETIME_FORMAT)
+    chat_title = _extract_chat_title(message.metadata)
+    if not chat_title:
+        chat_title = _extract_chat_id(message.metadata)
+    lines: List[str] = []
+    if chat_title:
+        lines.append(f"Чат: {chat_title}")
+    lines.append(f"Отправитель: {message.sender}")
+    lines.append(f"Время: {timestamp}")
+    return lines
+
+
+def _extract_chat_title(metadata: Any) -> Optional[str]:
+    normalized = _normalize_metadata(metadata)
+    if not isinstance(normalized, dict):
+        return None
+    title = _extract_chat_title_from_dict(normalized)
+    if title:
+        return title
+    raw = normalized.get("raw")
+    if isinstance(raw, dict):
+        return _extract_chat_title_from_dict(raw)
+    return None
+
+
+def _extract_chat_title_from_dict(payload: dict) -> Optional[str]:
+    for key in ("chat_name", "chatName", "chat_title", "chatTitle"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    for key in ("group_name", "groupName"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    group = payload.get("group")
+    if isinstance(group, dict):
+        for key in ("Name", "name", "Subject", "subject", "Title", "title"):
+            value = group.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    chat = payload.get("chat")
+    if isinstance(chat, dict):
+        for key in ("name", "title", "subject"):
+            value = chat.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _extract_chat_id(metadata: Any) -> Optional[str]:
+    normalized = _normalize_metadata(metadata)
+    if not isinstance(normalized, dict):
+        return None
+    for key in ("chat_id", "chatId"):
+        value = normalized.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _extract_media_links(metadata: Any) -> List[str]:
-    if metadata is None:
-        return []
-    if isinstance(metadata, str):
-        try:
-            metadata = json.loads(metadata)
-        except json.JSONDecodeError:
-            return []
-    if not isinstance(metadata, dict):
+    payload = _extract_payload(metadata)
+    if not isinstance(payload, dict):
         return []
 
     links: List[str] = []
@@ -87,10 +158,10 @@ def _extract_media_links(metadata: Any) -> List[str]:
             for item in value:
                 walk(item, depth + 1)
 
-    walk(metadata)
+    walk(payload)
 
-    base_url = _get_whapi_base_url()
-    token = _get_whapi_token()
+    base_url = _get_wappi_base_url()
+    token = _get_wappi_token()
     if base_url:
         for media_id in media_ids:
             links.append(_build_media_url(base_url, token, media_id))
@@ -113,15 +184,15 @@ def _looks_like_media(value: dict) -> bool:
     return False
 
 
-def _get_whapi_base_url() -> Optional[str]:
-    base_url = os.getenv("WHAPI_API_URL")
+def _get_wappi_base_url() -> Optional[str]:
+    base_url = os.getenv("WAPPI_API_URL")
     if not base_url:
         return None
     return base_url.rstrip("/")
 
 
-def _get_whapi_token() -> Optional[str]:
-    token = os.getenv("WHAPI_API_TOKEN")
+def _get_wappi_token() -> Optional[str]:
+    token = os.getenv("WAPPI_API_TOKEN")
     if not token:
         return None
     token = token.strip()
@@ -141,11 +212,7 @@ def _build_media_url(base_url: str, token: Optional[str], media_id: str) -> str:
 def _extract_media_type(metadata: Any) -> Optional[str]:
     if metadata is None:
         return None
-    if isinstance(metadata, str):
-        try:
-            metadata = json.loads(metadata)
-        except json.JSONDecodeError:
-            return None
+    metadata = _normalize_metadata(metadata)
     if not isinstance(metadata, dict):
         return None
 
@@ -219,5 +286,87 @@ def _translate_type(raw_type: str) -> str:
         "hsm": "шаблонное сообщение",
         "system": "системное сообщение",
         "action": "событие",
+        "unknown": "неизвестно",
     }
     return mapping.get(normalized, normalized)
+
+
+def extract_media(metadata: Any) -> Optional[MediaContent]:
+    """Извлечь медиа-контент из metadata, если он доступен."""
+
+    normalized = _extract_payload(metadata)
+    if not isinstance(normalized, dict):
+        return None
+
+    for key in (
+        "image",
+        "video",
+        "document",
+        "gif",
+        "audio",
+        "voice",
+        "sticker",
+        "short",
+    ):
+        value = normalized.get(key)
+        if not isinstance(value, dict):
+            continue
+        url = _select_media_url(value)
+        if not url:
+            media_id = value.get("id")
+            if isinstance(media_id, str) and media_id.strip():
+                base_url = _get_wappi_base_url()
+                token = _get_wappi_token()
+                if base_url:
+                    url = _build_media_url(base_url, token, media_id.strip())
+        if not url:
+            continue
+        caption = value.get("caption")
+        if not isinstance(caption, str):
+            caption = None
+        return MediaContent(media_type=key, url=url, caption=caption)
+
+    return None
+
+
+def has_displayable_content(message: MessageView) -> bool:
+    """Проверить, есть ли что показывать пользователю."""
+
+    text = (message.text or "").strip()
+    if text:
+        return True
+    if extract_media(message.metadata):
+        return True
+    return bool(_extract_media_links(message.metadata))
+
+
+def _normalize_metadata(metadata: Any) -> Any:
+    if isinstance(metadata, str):
+        try:
+            return json.loads(metadata)
+        except json.JSONDecodeError:
+            return None
+    return metadata
+
+
+def _extract_payload(metadata: Any) -> Any:
+    normalized = _normalize_metadata(metadata)
+    if not isinstance(normalized, dict):
+        return normalized
+    raw = normalized.get("raw")
+    if raw is None:
+        return normalized
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return normalized
+    return raw
+
+
+def _select_media_url(value: dict) -> Optional[str]:
+    for key in ("link", "url", "media_url"):
+        link = value.get(key)
+        if isinstance(link, str) and link.strip():
+            return link.strip()
+    return None

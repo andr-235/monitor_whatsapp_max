@@ -1,28 +1,33 @@
-"""Клиент для взаимодействия с API gate.whapi.cloud."""
+"""Клиент для взаимодействия с API Wappi."""
 
 from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
 
-from shared.config import WhapiConfig
-from shared.constants import WHAPI_CHATS_ENDPOINT, WHAPI_MESSAGES_ENDPOINT
+from shared.config import WappiConfig
+from shared.constants import (
+    WAPPI_CHATS_ENDPOINT,
+    WAPPI_MESSAGES_ENDPOINT,
+    WAPPI_MESSAGE_DATE_FORMAT,
+)
 from shared.retry import backoff_delays
 
 
-class RetryableWhapiError(RuntimeError):
+class RetryableWappiError(RuntimeError):
     """Исключение для ретраимых ошибок API."""
 
 
-class WhapiClient:
-    """HTTP-клиент для WhatsApp API."""
+class WappiClient:
+    """HTTP-клиент для Wappi API."""
 
-    def __init__(self, config: WhapiConfig) -> None:
+    def __init__(self, config: WappiConfig) -> None:
         self._logger = logging.getLogger(self.__class__.__name__)
-        self._base_url = config.api_url
+        self._profile_id = config.profile_id
         self._page_size = config.page_size
         self._include_system_messages = config.include_system_messages
         self._client = httpx.Client(
@@ -39,42 +44,66 @@ class WhapiClient:
     def list_chats(self) -> List[Dict[str, Any]]:
         """Получить все чаты из API с пагинацией."""
 
-        return self._paginate(WHAPI_CHATS_ENDPOINT, "chats")
+        params = {
+            "profile_id": self._profile_id,
+            "show_all": str(False).lower(),
+        }
+        return self._paginate(
+            WAPPI_CHATS_ENDPOINT,
+            "dialogs",
+            params=params,
+            method="POST",
+        )
 
     def list_messages(
         self, chat_id: str, time_from: Optional[int] = None, time_to: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Получить все сообщения чата с пагинацией."""
 
-        endpoint = WHAPI_MESSAGES_ENDPOINT.format(chat_id=chat_id)
-        params: Dict[str, Any] = {}
+        chat_id = self._normalize_chat_id(chat_id)
+        params: Dict[str, Any] = {
+            "profile_id": self._profile_id,
+            "chat_id": chat_id,
+            "order": "asc",
+        }
         if time_from is not None:
-            params["time_from"] = time_from
-        if time_to is not None:
-            params["time_to"] = time_to
-        params["sort"] = "asc"
-        params["normal_types"] = not self._include_system_messages
-        return self._paginate(endpoint, "messages", extra_params=params)
+            params["date"] = self._format_message_date(time_from)
+        messages = self._paginate(
+            WAPPI_MESSAGES_ENDPOINT,
+            "messages",
+            params=params,
+        )
+        if not self._include_system_messages:
+            messages = [
+                message for message in messages if message.get("type") != "system"
+            ]
+        return messages
 
     def _paginate(
-        self, endpoint: str, items_key: str, extra_params: Optional[Dict[str, Any]] = None
+        self,
+        endpoint: str,
+        items_key: str,
+        params: Dict[str, Any],
+        method: str = "GET",
+        total_key: str = "total_count",
     ) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         offset = 0
         while True:
-            params = {
-                "count": self._page_size,
+            page_params = {
+                **params,
+                "limit": self._page_size,
                 "offset": offset,
             }
-            if extra_params:
-                params.update(extra_params)
-            data = self._request_json(endpoint, params)
+            data = self._request_json(method, endpoint, page_params)
             page = self._extract_items(data, items_key)
             if not page:
                 break
             items.extend(page)
             offset += len(page)
-            total = data.get("total")
+            total = data.get(total_key)
+            if total is None:
+                total = data.get("total")
             if total is not None and offset >= total:
                 break
             if len(page) < self._page_size:
@@ -90,17 +119,22 @@ class WhapiClient:
                     return data[fallback]
         return []
 
-    def _request_json(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _request_json(
+        self, method: str, endpoint: str, params: Dict[str, Any]
+    ) -> Dict[str, Any]:
         for delay in backoff_delays():
             try:
-                response = self._client.get(endpoint, params=params)
+                request_kwargs: Dict[str, Any] = {"params": params}
+                if method.upper() == "POST":
+                    request_kwargs["json"] = {}
+                response = self._client.request(method, endpoint, **request_kwargs)
                 if response.status_code in {408, 429, 500, 502, 503, 504}:
-                    raise RetryableWhapiError(
+                    raise RetryableWappiError(
                         f"Код ответа для ретрая: {response.status_code}"
                     )
                 response.raise_for_status()
                 return response.json()
-            except (httpx.TimeoutException, httpx.TransportError, RetryableWhapiError) as exc:
+            except (httpx.TimeoutException, httpx.TransportError, RetryableWappiError) as exc:
                 self._logger.warning(
                     "Запрос к API не удался (%s). Повтор через %sс", exc, delay
                 )
@@ -116,9 +150,19 @@ class WhapiClient:
     @staticmethod
     def _build_headers(token: str) -> Dict[str, str]:
         header_value = token.strip()
-        if not header_value.lower().startswith("bearer "):
-            header_value = f"Bearer {header_value}"
+        if header_value.lower().startswith("bearer "):
+            header_value = header_value[7:].strip()
         return {
             "Authorization": header_value,
             "Accept": "application/json",
         }
+
+    @staticmethod
+    def _format_message_date(timestamp: int) -> str:
+        return datetime.utcfromtimestamp(timestamp).strftime(WAPPI_MESSAGE_DATE_FORMAT)
+
+    @staticmethod
+    def _normalize_chat_id(chat_id: str) -> str:
+        if chat_id.endswith("@g.us"):
+            return chat_id.split("@", 1)[0]
+        return chat_id

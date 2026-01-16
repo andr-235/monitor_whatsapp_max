@@ -13,9 +13,10 @@ MAX_BUFFER_SIZE = 1000
 MAX_RETRY_DELAY = 60
 RETRY_BACKOFF_START = 1
 
-WHAPI_CHATS_ENDPOINT = "/chats"
-WHAPI_MESSAGES_ENDPOINT = "/messages/list/{chat_id}"
-WHAPI_SKIPPED_CHAT_IDS = {"status@broadcast", "0@s.whatsapp.net"}
+WAPPI_CHATS_ENDPOINT = "/api/sync/chats/get"
+WAPPI_MESSAGES_ENDPOINT = "/api/sync/messages/get"
+WAPPI_SKIPPED_CHAT_IDS = {"status@broadcast", "0@s.whatsapp.net"}
+WAPPI_MESSAGE_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
 HEALTH_PATH = "/health"
 DEFAULT_WORKER_HEALTH_PORT = 8081

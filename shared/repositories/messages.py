@@ -29,7 +29,14 @@ def insert_messages(db: Database, messages: Iterable[MessageRecord]) -> int:
 
     query = (
         "INSERT INTO messages (message_id, chat_id, sender, text, timestamp, metadata) "
-        "VALUES %s ON CONFLICT (message_id) DO NOTHING"
+        "VALUES %s "
+        "ON CONFLICT (message_id) DO UPDATE SET "
+        "sender = CASE "
+        "WHEN EXCLUDED.sender = 'неизвестно' THEN messages.sender "
+        "WHEN EXCLUDED.sender LIKE '%%@lid' AND messages.sender NOT LIKE '%%@lid' THEN messages.sender "
+        "WHEN EXCLUDED.sender LIKE '%%@lid' THEN messages.sender "
+        "ELSE EXCLUDED.sender END, "
+        "metadata = EXCLUDED.metadata"
     )
     with db.connection() as conn, conn.cursor() as cursor:
         execute_values(cursor, query, rows, page_size=100)

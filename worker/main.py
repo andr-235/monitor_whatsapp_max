@@ -14,7 +14,7 @@ from shared.health import HealthServer
 from shared.logging_config import configure_logging
 from worker.buffer import MessageBuffer
 from worker.poller import Poller
-from worker.whapi_client import WhapiClient
+from worker.wappi_client import WappiClient
 
 
 def main() -> None:
@@ -31,9 +31,15 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001 - логируем и продолжаем с буфером
         logger.warning("Не удалось подключиться к БД при старте: %s", exc)
 
-    whapi = WhapiClient(config.whapi)
+    wappi = WappiClient(config.wappi)
     buffer = MessageBuffer()
-    poller = Poller(whapi, db, config.whapi.poll_interval, buffer)
+    poller = Poller(
+        wappi,
+        db,
+        config.wappi.poll_interval,
+        buffer,
+        full_sync_on_start=config.wappi.full_sync_on_start,
+    )
     stop_event = Event()
 
     def handle_signal(signum: int, _frame: Optional[FrameType]) -> None:
@@ -55,7 +61,7 @@ def main() -> None:
         poller.run(stop_event)
     finally:
         health_server.stop()
-        whapi.close()
+        wappi.close()
         db.close()
 
 

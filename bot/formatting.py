@@ -162,7 +162,7 @@ def _extract_media_links(metadata: Any) -> List[str]:
 
     base_url = _get_wappi_base_url()
     token = _get_wappi_token()
-    if base_url:
+    if base_url and media_ids and not links:
         for media_id in media_ids:
             links.append(_build_media_url(base_url, token, media_id))
 

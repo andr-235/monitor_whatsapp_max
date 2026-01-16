@@ -6,21 +6,31 @@ import html
 import json
 import os
 import re
+from datetime import datetime, timezone, tzinfo
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Sequence
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from bot.constants import (
+    BOT_TIMEZONE_ENV,
     HEADER_CHAT_LABEL,
     HEADER_LINKS_LABEL,
     HEADER_MATCH_LABEL,
     HEADER_SENDER_LABEL,
     HEADER_TIME_LABEL,
+    HEADER_TIME_LABEL_TZ_TEMPLATE,
+    HEADER_TIMESTAMP_LABEL,
     HEADER_TYPE_LABEL,
     KEYWORD_HIGHLIGHT_TEMPLATE,
     KEYWORDS_LIST_HEADER,
     KEYWORDS_LIST_ITEM_TEMPLATE,
+    LONG_MESSAGE_SPOILER_THRESHOLD,
     MESSAGE_SEPARATOR,
+    TELEGRAM_CAPTION_LIMIT,
+    TELEGRAM_MESSAGE_LIMIT,
+    TIMEZONE_LABEL_TEMPLATE,
+    UTC_LABEL,
 )
 from shared.constants import (
     DATETIME_FORMAT,
@@ -61,21 +71,26 @@ def format_message(
         message_type = None
 
     highlighted, matched_keywords = _highlight_text(text or caption, keywords)
-    lines = _format_header(message, message_type, matched_keywords)
-
     content = text or caption
-    body: List[str] = []
-    if content:
-        body.append(highlighted)
 
-    if links and (force_links or (not content and media is None)):
-        body.append(_format_links(links))
+    def build_message(use_spoiler: bool) -> str:
+        lines = _format_header(message, message_type, matched_keywords)
+        body: List[str] = []
+        if content:
+            display = _wrap_spoiler(highlighted) if use_spoiler else highlighted
+            body.append(display)
+        if links and (force_links or (not content and media is None)):
+            body.append(_format_links(links))
+        if body:
+            lines.append(MESSAGE_SEPARATOR)
+            lines.extend(body)
+        return "\n".join(lines)
 
-    if body:
-        lines.append(MESSAGE_SEPARATOR)
-        lines.extend(body)
-
-    return "\n".join(lines)
+    use_spoiler = bool(content) and _should_wrap_spoiler(content)
+    rendered = build_message(use_spoiler)
+    if use_spoiler and len(rendered) > TELEGRAM_MESSAGE_LIMIT:
+        rendered = build_message(False)
+    return rendered
 
 
 def format_message_caption(
@@ -90,11 +105,19 @@ def format_message_caption(
     message_type = _extract_media_type(message.metadata)
 
     highlighted, matched_keywords = _highlight_text(caption, keywords)
+    use_spoiler = bool(caption) and _should_wrap_spoiler(caption)
     lines = _format_header(message, message_type, matched_keywords)
     if caption:
         lines.append(MESSAGE_SEPARATOR)
+        display = _wrap_spoiler(highlighted) if use_spoiler else highlighted
+        lines.append(display)
+    rendered = "\n".join(lines)
+    if use_spoiler and len(rendered) > TELEGRAM_CAPTION_LIMIT:
+        lines = _format_header(message, message_type, matched_keywords)
+        lines.append(MESSAGE_SEPARATOR)
         lines.append(highlighted)
-    return "\n".join(lines)
+        rendered = "\n".join(lines)
+    return rendered
 
 
 def format_message_page(messages: Iterable[MessageView]) -> str:
@@ -120,7 +143,7 @@ def format_keywords_list(keywords: Iterable[str]) -> str:
 def _format_header(
     message: MessageView, message_type: Optional[str], matched_keywords: List[str]
 ) -> List[str]:
-    timestamp = message.timestamp.strftime(DATETIME_FORMAT)
+    timestamp, tz_label = _format_timestamp_display(message.timestamp)
     chat_title = _extract_chat_title(message.metadata)
     if not chat_title:
         chat_title = _extract_chat_id(message.metadata)
@@ -132,12 +155,26 @@ def _format_header(
     if chat_title:
         lines.append(_format_label(HEADER_CHAT_LABEL, chat_title))
     lines.append(_format_label(HEADER_SENDER_LABEL, sender))
-    lines.append(_format_label(HEADER_TIME_LABEL, timestamp))
+    time_label = (
+        HEADER_TIME_LABEL_TZ_TEMPLATE.format(tz=tz_label) if tz_label else HEADER_TIME_LABEL
+    )
+    lines.append(_format_label(time_label, timestamp))
+    epoch_timestamp = _extract_epoch_timestamp(message.metadata)
+    if epoch_timestamp is not None:
+        lines.append(_format_label(HEADER_TIMESTAMP_LABEL, str(epoch_timestamp)))
     if message_type:
         lines.append(_format_label(HEADER_TYPE_LABEL, message_type))
     if matched_keywords:
         lines.append(_format_label(HEADER_MATCH_LABEL, ", ".join(matched_keywords)))
     return lines
+
+
+def _should_wrap_spoiler(content: str) -> bool:
+    return len(content) >= LONG_MESSAGE_SPOILER_THRESHOLD
+
+
+def _wrap_spoiler(content: str) -> str:
+    return f"<tg-spoiler>{content}</tg-spoiler>"
 
 
 def _format_label(label: str, value: str) -> str:
@@ -228,6 +265,59 @@ def _extract_chat_title(metadata: Any) -> Optional[str]:
     if isinstance(raw, dict):
         return _extract_chat_title_from_dict(raw)
     return None
+
+
+def _format_timestamp_display(timestamp: datetime) -> tuple[str, str]:
+    aware = timestamp
+    if aware.tzinfo is None:
+        aware = aware.replace(tzinfo=timezone.utc)
+    timezone_value, timezone_name = _resolve_timezone()
+    local_time = aware.astimezone(timezone_value)
+    tz_label = _format_timezone_label(local_time, timezone_name)
+    return local_time.strftime(DATETIME_FORMAT), tz_label
+
+
+def _resolve_timezone() -> tuple[tzinfo, Optional[str]]:
+    tz_name = os.getenv(BOT_TIMEZONE_ENV)
+    if not tz_name:
+        return timezone.utc, None
+    try:
+        return ZoneInfo(tz_name), tz_name
+    except Exception:
+        return timezone.utc, None
+
+
+def _format_timezone_label(local_time: datetime, tz_name: Optional[str]) -> str:
+    offset = local_time.utcoffset()
+    if offset is None:
+        offset_label = UTC_LABEL
+    else:
+        total_seconds = int(offset.total_seconds())
+        sign = "+" if total_seconds >= 0 else "-"
+        total_seconds = abs(total_seconds)
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        offset_label = f"{UTC_LABEL}{sign}{hours:02d}:{minutes:02d}"
+    if tz_name:
+        return TIMEZONE_LABEL_TEMPLATE.format(name=tz_name, offset=offset_label)
+    return offset_label
+
+
+def _extract_epoch_timestamp(metadata: Any) -> Optional[int]:
+    normalized = _normalize_metadata(metadata)
+    if not isinstance(normalized, dict):
+        return None
+    value = normalized.get("timestamp")
+    if value is None:
+        raw = normalized.get("raw")
+        if isinstance(raw, dict):
+            value = raw.get("timestamp") or raw.get("time")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _extract_chat_title_from_dict(payload: dict) -> Optional[str]:

@@ -2,13 +2,31 @@
 
 from __future__ import annotations
 
+import html
 import json
 import os
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional
 from urllib.parse import quote
 
-from shared.constants import DATETIME_FORMAT
+from bot.constants import (
+    HEADER_CHAT_LABEL,
+    HEADER_LINKS_LABEL,
+    HEADER_SENDER_LABEL,
+    HEADER_TIME_LABEL,
+    HEADER_TYPE_LABEL,
+    KEYWORDS_LIST_HEADER,
+    KEYWORDS_LIST_ITEM_TEMPLATE,
+    MESSAGE_SEPARATOR,
+)
+from shared.constants import (
+    DATETIME_FORMAT,
+    PROVIDER_MAX,
+    PROVIDER_WAPPI,
+    SOURCE_LABEL_HEADER,
+    SOURCE_LABEL_MAX,
+    SOURCE_LABEL_WAPPI,
+)
 from shared.models import MessageView
 
 
@@ -27,21 +45,27 @@ def format_message(message: MessageView, force_links: bool = False) -> str:
     text = (message.text or "").strip()
     links = _extract_media_links(message.metadata)
     media = extract_media(message.metadata)
+    caption = (media.caption or "").strip() if media else ""
 
-    lines = _format_header(message)
+    message_type = _extract_media_type(message.metadata)
+    if media and not message_type:
+        message_type = _translate_type(media.media_type)
+    if message_type == "текст" and text:
+        message_type = None
 
-    if text:
-        lines.append(text)
-    else:
-        caption = (media.caption or "").strip() if media else ""
-        if caption:
-            lines.append(caption)
+    lines = _format_header(message, message_type)
 
-    if links and (force_links or (not text and media is None)):
-        if len(links) == 1:
-            lines.append(f"Ссылка: {links[0]}")
-        else:
-            lines.append("Ссылки:\n" + "\n".join(links))
+    content = text or caption
+    body: List[str] = []
+    if content:
+        body.append(_escape(content))
+
+    if links and (force_links or (not content and media is None)):
+        body.append(_format_links(links))
+
+    if body:
+        lines.append(MESSAGE_SEPARATOR)
+        lines.extend(body)
 
     return "\n".join(lines)
 
@@ -51,10 +75,12 @@ def format_message_caption(message: MessageView, fallback_caption: Optional[str]
 
     text = (message.text or "").strip()
     caption = text or (fallback_caption or "").strip()
+    message_type = _extract_media_type(message.metadata)
 
-    lines = _format_header(message)
+    lines = _format_header(message, message_type)
     if caption:
-        lines.append(caption)
+        lines.append(MESSAGE_SEPARATOR)
+        lines.append(_escape(caption))
     return "\n".join(lines)
 
 
@@ -65,17 +91,55 @@ def format_message_page(messages: Iterable[MessageView]) -> str:
     return "\n\n".join(items)
 
 
-def _format_header(message: MessageView) -> List[str]:
+def format_keywords_list(keywords: Iterable[str]) -> str:
+    """Отформатировать список ключевых слов."""
+
+    cleaned = [_normalize_keyword(keyword) for keyword in keywords]
+    items = [keyword for keyword in cleaned if keyword]
+    lines = [KEYWORDS_LIST_HEADER.format(count=len(items))]
+    lines.extend(
+        KEYWORDS_LIST_ITEM_TEMPLATE.format(index=index, keyword=keyword)
+        for index, keyword in enumerate(items, start=1)
+    )
+    return "\n".join(lines)
+
+
+def _format_header(message: MessageView, message_type: Optional[str]) -> List[str]:
     timestamp = message.timestamp.strftime(DATETIME_FORMAT)
     chat_title = _extract_chat_title(message.metadata)
     if not chat_title:
         chat_title = _extract_chat_id(message.metadata)
+    sender = (message.sender or "").strip() or "неизвестно"
     lines: List[str] = []
+    source_label = _format_source_label(message.metadata)
+    if source_label:
+        lines.append(_format_label(SOURCE_LABEL_HEADER, source_label))
     if chat_title:
-        lines.append(f"Чат: {chat_title}")
-    lines.append(f"Отправитель: {message.sender}")
-    lines.append(f"Время: {timestamp}")
+        lines.append(_format_label(HEADER_CHAT_LABEL, chat_title))
+    lines.append(_format_label(HEADER_SENDER_LABEL, sender))
+    lines.append(_format_label(HEADER_TIME_LABEL, timestamp))
+    if message_type:
+        lines.append(_format_label(HEADER_TYPE_LABEL, message_type))
     return lines
+
+
+def _format_label(label: str, value: str) -> str:
+    return f"<b>{_escape(label)}:</b> {_escape(value)}"
+
+
+def _format_links(links: List[str]) -> str:
+    escaped_links = [_escape(link) for link in links]
+    lines = [f"<b>{_escape(HEADER_LINKS_LABEL)}:</b>"]
+    lines.extend(f"- {link}" for link in escaped_links)
+    return "\n".join(lines)
+
+
+def _escape(value: str) -> str:
+    return html.escape(value, quote=False)
+
+
+def _normalize_keyword(keyword: str) -> str:
+    return " ".join(keyword.strip().split())
 
 
 def _extract_chat_title(metadata: Any) -> Optional[str]:
@@ -123,6 +187,33 @@ def _extract_chat_id(metadata: Any) -> Optional[str]:
         value = normalized.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    return None
+
+
+def _format_source_label(metadata: Any) -> Optional[str]:
+    provider = _extract_provider(metadata)
+    if not provider:
+        return None
+    normalized = provider.strip().lower()
+    mapping = {
+        PROVIDER_WAPPI: SOURCE_LABEL_WAPPI,
+        PROVIDER_MAX: SOURCE_LABEL_MAX,
+    }
+    return mapping.get(normalized)
+
+
+def _extract_provider(metadata: Any) -> Optional[str]:
+    normalized = _normalize_metadata(metadata)
+    if not isinstance(normalized, dict):
+        return None
+    provider = normalized.get("provider")
+    if isinstance(provider, str) and provider.strip():
+        return provider.strip()
+    raw = normalized.get("raw")
+    if isinstance(raw, dict):
+        provider = raw.get("provider")
+        if isinstance(provider, str) and provider.strip():
+            return provider.strip()
     return None
 
 

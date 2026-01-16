@@ -1,37 +1,58 @@
-"""Логика опроса WhatsApp API."""
+"""Логика опроса внешних API сообщений."""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime
 from threading import Event
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Set
 
 import psycopg2
 
-from shared.constants import DATETIME_FORMAT, WAPPI_SKIPPED_CHAT_IDS
+from shared.constants import DATETIME_FORMAT, PROVIDER_WAPPI
 from shared.db import Database
 from shared.models import MessageRecord
-from shared.repositories.messages import get_latest_message_timestamp, insert_messages
 from worker.buffer import MessageBuffer
-from worker.wappi_client import WappiClient
+
+InsertMessagesFn = Callable[[Database, Iterable[MessageRecord]], int]
+GetLatestTimestampFn = Callable[[Database], Optional[int]]
+
+
+class MessageClient(Protocol):
+    """Протокол клиента API сообщений."""
+
+    def list_chats(self) -> List[Dict[str, Any]]:
+        """Получить список чатов."""
+
+    def list_messages(
+        self, chat_id: str, time_from: Optional[int] = None, time_to: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Получить сообщения чата."""
 
 
 class Poller:
-    """Координирует опрос и сохранение сообщений WhatsApp."""
+    """Координирует опрос и сохранение сообщений."""
 
     def __init__(
         self,
-        wappi_client: WappiClient,
+        client: MessageClient,
         db: Database,
         poll_interval: int,
         buffer: MessageBuffer,
+        insert_messages_fn: InsertMessagesFn,
+        get_latest_timestamp_fn: GetLatestTimestampFn,
         full_sync_on_start: bool = False,
+        skipped_chat_ids: Optional[Set[str]] = None,
+        provider: str = PROVIDER_WAPPI,
     ) -> None:
-        self._wappi = wappi_client
+        self._client = client
         self._db = db
         self._poll_interval = poll_interval
         self._buffer = buffer
+        self._insert_messages = insert_messages_fn
+        self._get_latest_message_timestamp = get_latest_timestamp_fn
+        self._skipped_chat_ids = set(skipped_chat_ids or set())
+        self._provider = provider
         self._logger = logging.getLogger(self.__class__.__name__)
         self._last_poll_started_at: Optional[datetime] = None
         self._last_poll_success_at: Optional[datetime] = None
@@ -78,12 +99,12 @@ class Poller:
             self._logger.info("Полная синхронизация включена, игнорируем последний timestamp")
         elif self._last_message_ts is None:
             try:
-                self._last_message_ts = get_latest_message_timestamp(self._db)
+                self._last_message_ts = self._get_latest_message_timestamp(self._db)
             except psycopg2.Error as exc:
                 self._logger.warning("Не удалось загрузить время последнего сообщения: %s", exc)
 
         try:
-            chats = self._wappi.list_chats()
+            chats = self._client.list_chats()
         except Exception as exc:  # noqa: BLE001 - широкая ошибка, чтобы цикл не падал
             self._logger.error("Не удалось получить список чатов: %s", exc)
             return False
@@ -93,13 +114,13 @@ class Poller:
             if not chat_id:
                 continue
             chat_id = str(chat_id)
-            if chat_id in WAPPI_SKIPPED_CHAT_IDS:
+            if chat_id in self._skipped_chat_ids:
                 continue
             try:
                 chat_name = self._extract_chat_name(chat)
                 participants_map = self._extract_group_participants(chat)
                 time_from = self._calculate_time_from()
-                messages = self._wappi.list_messages(chat_id, time_from=time_from)
+                messages = self._client.list_messages(chat_id, time_from=time_from)
                 self._process_messages(chat_id, chat_name, participants_map, messages)
             except Exception as exc:  # noqa: BLE001 - продолжаем опрос других чатов
                 self._logger.error("Не удалось обработать чат %s: %s", chat_id, exc)
@@ -135,7 +156,7 @@ class Poller:
 
     def _store_messages(self, messages: List[MessageRecord]) -> int:
         try:
-            inserted = insert_messages(self._db, messages)
+            inserted = self._insert_messages(self._db, messages)
             return inserted
         except psycopg2.Error as exc:
             dropped = self._buffer.add(messages)
@@ -149,7 +170,7 @@ class Poller:
             return True
         buffered = self._buffer.items()
         try:
-            inserted = insert_messages(self._db, buffered)
+            inserted = self._insert_messages(self._db, buffered)
             self._buffer.drain()
             self._logger.info("Сброшено в БД %s сообщений из буфера", inserted)
             return True
@@ -179,9 +200,11 @@ class Poller:
             or payload.get("from")
             or payload.get("author")
         )
-        timestamp = payload.get("time")
-        if timestamp is None:
-            timestamp = payload.get("timestamp")
+        timestamp_value = payload.get("time")
+        if timestamp_value is None:
+            timestamp_value = payload.get("timestamp")
+
+        timestamp = self._coerce_timestamp(timestamp_value)
 
         if not message_id or not chat_id or timestamp is None:
             self._logger.warning("Пропуск сообщения с отсутствующими полями: %s", payload)
@@ -192,8 +215,8 @@ class Poller:
             sender = "неизвестно"
 
         text = self._extract_text(payload)
-        message_time = datetime.utcfromtimestamp(int(timestamp))
-        self._last_message_ts = max(self._last_message_ts or 0, int(timestamp))
+        message_time = datetime.utcfromtimestamp(timestamp)
+        self._last_message_ts = max(self._last_message_ts or 0, timestamp)
         chat_id_value = str(chat_id)
 
         metadata = self._build_metadata(
@@ -202,7 +225,7 @@ class Poller:
             chat_id=chat_id_value,
             chat_name=chat_name,
             sender=str(sender),
-            timestamp=int(timestamp),
+            timestamp=timestamp,
         )
 
         return MessageRecord(
@@ -217,6 +240,7 @@ class Poller:
     def _extract_text(self, payload: Dict[str, Any]) -> Optional[str]:
         for path in (
             ("body",),
+            ("caption",),
             ("text", "body"),
             ("image", "caption"),
             ("video", "caption"),
@@ -299,7 +323,7 @@ class Poller:
             chat_name_value = chat_name
 
         metadata: Dict[str, Any] = {
-            "provider": "wappi",
+            "provider": self._provider,
             "message_id": message_id,
             "chat_id": chat_id,
             "sender": sender,
@@ -314,6 +338,22 @@ class Poller:
         if chat_id.endswith("@g.us"):
             metadata["is_group"] = True
         return metadata
+
+    @classmethod
+    def _coerce_timestamp(cls, timestamp: Optional[object]) -> Optional[int]:
+        if timestamp is None:
+            return None
+        try:
+            value = int(timestamp)
+        except (TypeError, ValueError):
+            return None
+        return cls._normalize_timestamp(value)
+
+    @staticmethod
+    def _normalize_timestamp(timestamp: int) -> int:
+        if timestamp > 1_000_000_000_000:
+            return timestamp // 1000
+        return timestamp
 
     @staticmethod
     def _should_override_chat_name(

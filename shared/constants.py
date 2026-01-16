@@ -18,6 +18,20 @@ WAPPI_MESSAGES_ENDPOINT = "/api/sync/messages/get"
 WAPPI_SKIPPED_CHAT_IDS = {"status@broadcast", "0@s.whatsapp.net"}
 WAPPI_MESSAGE_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
+MAX_CHATS_ENDPOINT = "/maxapi/sync/chats/get"
+MAX_MESSAGES_ENDPOINT = "/maxapi/sync/messages/get"
+MAX_MESSAGE_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+PROVIDER_WAPPI = "wappi"
+PROVIDER_MAX = "max"
+
+SOURCE_LABEL_WAPPI = "WhatsApp"
+SOURCE_LABEL_MAX = "Max"
+SOURCE_LABEL_HEADER = "Источник"
+
+MESSAGES_TABLE = "messages"
+MESSAGES_MAX_TABLE = "messages_max"
+
 HEALTH_PATH = "/health"
 DEFAULT_WORKER_HEALTH_PORT = 8081
 DEFAULT_BOT_HEALTH_PORT = 8082

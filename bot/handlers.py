@@ -19,14 +19,17 @@ from bot.constants import (
     KEYWORD_EXISTS_MESSAGE,
     KEYWORD_NOT_FOUND_MESSAGE,
     KEYWORD_REMOVED_MESSAGE,
-    KEYWORDS_LIST_HEADER,
+    MENU_MESSAGE,
     NO_KEYWORDS_MESSAGE,
     NO_RESULTS_MESSAGE,
     RECENT_USAGE,
+    RECENT_RESULTS_HEADER,
     REMOVE_KEYWORD_USAGE,
+    SEARCH_RESULTS_HEADER,
     START_MESSAGE,
 )
-from bot.formatting import has_displayable_content
+from bot.formatting import format_keywords_list, has_displayable_content
+from bot.menu import build_main_menu
 from bot.message_sender import send_message_with_media
 from bot.keyword_service import KeywordService
 from shared.constants import DEFAULT_RECENT_LIMIT, PAGE_SIZE, SEARCH_LIMIT
@@ -35,8 +38,9 @@ from shared.models import MessageView
 from shared.repositories import user_state as state_repo
 from shared.repositories.messages import (
     get_max_message_id,
-    get_recent_messages,
-    search_messages_by_keywords,
+    get_max_message_id_max,
+    get_recent_messages_combined,
+    search_messages_by_keywords_combined,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,7 +64,15 @@ async def _run_db(action: Callable[..., T], *args: object) -> T:
 async def start(message: Message) -> None:
     """Обработать команду /start."""
 
-    await message.reply(START_MESSAGE)
+    await message.reply(START_MESSAGE, reply_markup=build_main_menu())
+
+
+@router.message(Command("menu"))
+@router.message(Command("help"))
+async def show_menu(message: Message) -> None:
+    """Показать меню команд."""
+
+    await message.reply(MENU_MESSAGE, reply_markup=build_main_menu())
 
 
 @router.message(Command("recent"))
@@ -81,7 +93,7 @@ async def recent(message: Message, command: CommandObject, db: Database) -> None
         return
 
     try:
-        messages = await _run_db(get_recent_messages, db, limit, 0)
+        messages = await _run_db(get_recent_messages_combined, db, limit, 0)
     except psycopg2.Error as exc:
         logger.error("Ошибка БД при /recent: %s", exc)
         await message.reply(DB_ERROR_MESSAGE)
@@ -92,6 +104,7 @@ async def recent(message: Message, command: CommandObject, db: Database) -> None
         await message.reply(NO_RESULTS_MESSAGE)
         return
 
+    await message.reply(RECENT_RESULTS_HEADER.format(count=len(messages)))
     await _send_paginated(message, messages)
 
 
@@ -117,7 +130,13 @@ async def add_keyword(
         await message.reply(DB_ERROR_MESSAGE)
         return
 
-    await message.reply(KEYWORD_ADDED_MESSAGE if added else KEYWORD_EXISTS_MESSAGE)
+    keyword_display = keyword.strip()
+    reply_text = (
+        KEYWORD_ADDED_MESSAGE.format(keyword=keyword_display)
+        if added
+        else KEYWORD_EXISTS_MESSAGE.format(keyword=keyword_display)
+    )
+    await message.reply(reply_text)
 
     if added:
         await _initialize_user_state(db, user_id)
@@ -145,7 +164,13 @@ async def remove_keyword(
         await message.reply(DB_ERROR_MESSAGE)
         return
 
-    await message.reply(KEYWORD_REMOVED_MESSAGE if removed else KEYWORD_NOT_FOUND_MESSAGE)
+    keyword_display = keyword.strip()
+    reply_text = (
+        KEYWORD_REMOVED_MESSAGE.format(keyword=keyword_display)
+        if removed
+        else KEYWORD_NOT_FOUND_MESSAGE.format(keyword=keyword_display)
+    )
+    await message.reply(reply_text)
 
 
 @router.message(Command("list_keywords"))
@@ -167,7 +192,7 @@ async def list_keywords(message: Message, keyword_service: KeywordService) -> No
         await message.reply(NO_KEYWORDS_MESSAGE)
         return
 
-    formatted = "\n".join([KEYWORDS_LIST_HEADER, *keywords])
+    formatted = format_keywords_list(keywords)
     await message.reply(formatted)
 
 
@@ -191,7 +216,9 @@ async def search(message: Message, db: Database, keyword_service: KeywordService
         return
 
     try:
-        messages = await _run_db(search_messages_by_keywords, db, keywords, SEARCH_LIMIT, 0)
+        messages = await _run_db(
+            search_messages_by_keywords_combined, db, keywords, SEARCH_LIMIT, 0
+        )
     except psycopg2.Error as exc:
         logger.error("Ошибка БД при /search: %s", exc)
         await message.reply(DB_ERROR_MESSAGE)
@@ -202,6 +229,7 @@ async def search(message: Message, db: Database, keyword_service: KeywordService
         await message.reply(NO_RESULTS_MESSAGE)
         return
 
+    await message.reply(SEARCH_RESULTS_HEADER.format(count=len(messages)))
     await _send_paginated(message, messages)
 
 
@@ -215,9 +243,14 @@ async def _send_paginated(message: Message, messages: List[MessageView]) -> None
 async def _initialize_user_state(db: Database, user_id: int) -> None:
     try:
         last_seen = await _run_db(state_repo.get_last_seen_message_id, db, user_id)
-        if last_seen > 0:
-            return
+        last_seen_max = await _run_db(state_repo.get_last_seen_message_max_id, db, user_id)
         max_id = await _run_db(get_max_message_id, db)
-        await _run_db(state_repo.upsert_last_seen_message_id, db, user_id, max_id)
+        max_id_max = await _run_db(get_max_message_id_max, db)
+        if last_seen == 0:
+            await _run_db(state_repo.upsert_last_seen_message_id, db, user_id, max_id)
+        if last_seen_max == 0:
+            await _run_db(
+                state_repo.upsert_last_seen_message_max_id, db, user_id, max_id_max
+            )
     except psycopg2.Error as exc:
         logger.warning("Не удалось инициализировать состояние пользователя %s: %s", user_id, exc)

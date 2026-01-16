@@ -12,6 +12,7 @@ from aiogram import Bot, Dispatcher
 
 from bot.handlers import router as bot_router
 from bot.keyword_service import KeywordService
+from bot.menu import setup_bot_commands
 from bot.notifier import run_notifier
 from shared.config import load_bot_config, load_environment
 from shared.constants import DATETIME_FORMAT
@@ -36,6 +37,10 @@ async def _run_bot() -> None:
 
     keyword_service = KeywordService(db)
     bot = Bot(token=config.telegram.bot_token)
+    try:
+        await setup_bot_commands(bot)
+    except Exception as exc:  # noqa: BLE001 - логируем и продолжаем
+        logger.warning("Не удалось обновить меню команд: %s", exc)
     dispatcher = Dispatcher()
     dispatcher.include_router(bot_router)
 

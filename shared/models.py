@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 @dataclass(frozen=True)
 class MessageRecord:
-    """Представление сообщения WhatsApp, сохраняемого в БД."""
+    """Представление сообщения мессенджера, сохраняемого в БД."""
 
     message_id: str
     chat_id: str

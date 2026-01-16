@@ -12,8 +12,9 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramFor
 
 from bot.formatting import has_displayable_content
 from bot.message_sender import send_message_with_media
-from shared.constants import NOTIFY_LIMIT
+from shared.constants import NOTIFY_LIMIT, SOURCE_LABEL_MAX, SOURCE_LABEL_WAPPI
 from shared.db import Database
+from shared.models import MessageView
 from shared.repositories import keywords as keyword_repo
 from shared.repositories import messages as message_repo
 from shared.repositories import user_state as state_repo
@@ -47,41 +48,94 @@ async def poll_and_notify(bot: Bot, db: Database) -> None:
     """Проверить новые сообщения и отправить уведомления пользователям."""
 
     try:
-        max_id = await _run_db(message_repo.get_max_message_id, db)
-    except psycopg2.Error as exc:
-        logger.error("Ошибка БД при получении max id: %s", exc)
-        return
-
-    if max_id <= 0:
-        return
-
-    try:
         users = await _run_db(state_repo.list_users_with_keywords, db)
     except psycopg2.Error as exc:
         logger.error("Ошибка БД при получении пользователей: %s", exc)
         return
 
+    if not users:
+        return
+
+    await _poll_provider(
+        bot=bot,
+        db=db,
+        users=users,
+        provider_label=SOURCE_LABEL_WAPPI,
+        get_max_id=message_repo.get_max_message_id,
+        get_last_seen=state_repo.get_last_seen_message_id,
+        upsert_last_seen=state_repo.upsert_last_seen_message_id,
+        get_messages=message_repo.get_messages_by_keywords_between_ids,
+    )
+    await _poll_provider(
+        bot=bot,
+        db=db,
+        users=users,
+        provider_label=SOURCE_LABEL_MAX,
+        get_max_id=message_repo.get_max_message_id_max,
+        get_last_seen=state_repo.get_last_seen_message_max_id,
+        upsert_last_seen=state_repo.upsert_last_seen_message_max_id,
+        get_messages=message_repo.get_messages_by_keywords_between_ids_max,
+    )
+
+
+async def _poll_provider(
+    bot: Bot,
+    db: Database,
+    users: List[int],
+    provider_label: str,
+    get_max_id: Callable[[Database], int],
+    get_last_seen: Callable[[Database, int], int],
+    upsert_last_seen: Callable[[Database, int, int], None],
+    get_messages: Callable[[Database, List[str], int, int, int], List[MessageView]],
+) -> None:
+    try:
+        max_id = await _run_db(get_max_id, db)
+    except psycopg2.Error as exc:
+        logger.error("Ошибка БД при получении max id (%s): %s", provider_label, exc)
+        return
+
+    if max_id <= 0:
+        return
+
     for user_id in users:
         try:
-            last_seen = await _run_db(state_repo.get_last_seen_message_id, db, user_id)
+            last_seen = await _run_db(get_last_seen, db, user_id)
             if last_seen >= max_id:
                 continue
             if last_seen == 0:
-                await _run_db(state_repo.upsert_last_seen_message_id, db, user_id, max_id)
+                await _run_db(upsert_last_seen, db, user_id, max_id)
                 continue
 
             keywords = await _run_db(keyword_repo.list_keywords, db, user_id)
             if not keywords:
-                await _run_db(state_repo.upsert_last_seen_message_id, db, user_id, max_id)
+                await _run_db(upsert_last_seen, db, user_id, max_id)
                 continue
 
-            await _notify_user(bot, db, user_id, keywords, last_seen, max_id)
-            await _run_db(state_repo.upsert_last_seen_message_id, db, user_id, max_id)
+            await _notify_user(
+                bot,
+                db,
+                user_id,
+                keywords,
+                last_seen,
+                max_id,
+                get_messages,
+            )
+            await _run_db(upsert_last_seen, db, user_id, max_id)
         except psycopg2.Error as exc:
-            logger.error("Ошибка БД при обработке пользователя %s: %s", user_id, exc)
+            logger.error(
+                "Ошибка БД при обработке пользователя %s (%s): %s",
+                user_id,
+                provider_label,
+                exc,
+            )
         except TelegramAPIError as exc:
-            logger.warning("Ошибка Telegram при отправке пользователю %s: %s", user_id, exc)
-            await _run_db(state_repo.upsert_last_seen_message_id, db, user_id, max_id)
+            logger.warning(
+                "Ошибка Telegram при отправке пользователю %s (%s): %s",
+                user_id,
+                provider_label,
+                exc,
+            )
+            await _run_db(upsert_last_seen, db, user_id, max_id)
 
 
 async def _notify_user(
@@ -91,11 +145,12 @@ async def _notify_user(
     keywords: List[str],
     last_seen: int,
     max_id: int,
+    get_messages: Callable[[Database, List[str], int, int, int], List[MessageView]],
 ) -> None:
     current = last_seen
     while current < max_id:
         messages = await _run_db(
-            message_repo.get_messages_by_keywords_between_ids,
+            get_messages,
             db,
             keywords,
             current,

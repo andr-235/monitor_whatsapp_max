@@ -26,6 +26,8 @@ ENV_WAPPI_REQUEST_TIMEOUT = "WAPPI_REQUEST_TIMEOUT"
 ENV_WAPPI_PAGE_SIZE = "WAPPI_PAGE_SIZE"
 ENV_WAPPI_INCLUDE_SYSTEM = "WAPPI_INCLUDE_SYSTEM_MESSAGES"
 
+ENV_MAX_PROFILE_ID = "MAX_PROFILE_ID"
+
 ENV_POSTGRES_HOST = "POSTGRES_HOST"
 ENV_POSTGRES_PORT = "POSTGRES_PORT"
 ENV_POSTGRES_DB = "POSTGRES_DB"
@@ -77,6 +79,20 @@ class WappiConfig:
 
 
 @dataclass(frozen=True)
+class MaxConfig:
+    """Конфигурация Max API."""
+
+    api_url: str
+    api_token: str
+    profile_id: str
+    full_sync_on_start: bool
+    poll_interval: int
+    request_timeout: int
+    page_size: int
+    include_system_messages: bool
+
+
+@dataclass(frozen=True)
 class TelegramConfig:
     """Конфигурация Telegram-бота."""
 
@@ -89,6 +105,7 @@ class WorkerConfig:
 
     database: DatabaseConfig
     wappi: WappiConfig
+    max_api: MaxConfig
     log_level: str
     health_port: int
 
@@ -167,12 +184,29 @@ def load_wappi_config() -> WappiConfig:
     )
 
 
+def load_max_config(wappi_config: WappiConfig) -> MaxConfig:
+    """Загрузить конфигурацию Max API из переменных окружения."""
+
+    return MaxConfig(
+        api_url=wappi_config.api_url,
+        api_token=wappi_config.api_token,
+        profile_id=_required_env(ENV_MAX_PROFILE_ID).strip(),
+        full_sync_on_start=wappi_config.full_sync_on_start,
+        poll_interval=wappi_config.poll_interval,
+        request_timeout=wappi_config.request_timeout,
+        page_size=wappi_config.page_size,
+        include_system_messages=wappi_config.include_system_messages,
+    )
+
+
 def load_worker_config() -> WorkerConfig:
     """Загрузить конфигурацию worker из переменных окружения."""
 
+    wappi = load_wappi_config()
     return WorkerConfig(
         database=load_database_config(),
-        wappi=load_wappi_config(),
+        wappi=wappi,
+        max_api=load_max_config(wappi),
         log_level=os.getenv(ENV_LOG_LEVEL, DEFAULT_LOG_LEVEL),
         health_port=_get_env_int(ENV_WORKER_HEALTH_PORT, DEFAULT_WORKER_HEALTH_PORT),
     )

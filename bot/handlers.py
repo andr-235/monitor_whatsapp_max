@@ -7,14 +7,17 @@ import logging
 from typing import Callable, List, TypeVar
 
 import psycopg2
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.filters.command import CommandObject
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
+from aiogram.exceptions import TelegramAPIError
 
 from bot.constants import (
-    ADD_KEYWORD_USAGE,
+    ADD_KEYWORD_PROMPT,
     DB_ERROR_MESSAGE,
+    KEYWORD_EMPTY_MESSAGE,
     KEYWORD_ADDED_MESSAGE,
     KEYWORD_EXISTS_MESSAGE,
     KEYWORD_NOT_FOUND_MESSAGE,
@@ -24,7 +27,8 @@ from bot.constants import (
     NO_RESULTS_MESSAGE,
     RECENT_USAGE,
     RECENT_RESULTS_HEADER,
-    REMOVE_KEYWORD_USAGE,
+    REMOVE_KEYWORD_PROMPT,
+    SEARCH_RESULTS_ERROR_SUFFIX,
     SEARCH_RESULTS_HEADER,
     START_MESSAGE,
 )
@@ -32,7 +36,12 @@ from bot.formatting import format_keywords_list, has_displayable_content
 from bot.menu import build_main_menu
 from bot.message_sender import send_message_with_media
 from bot.keyword_service import KeywordService
-from shared.constants import DEFAULT_RECENT_LIMIT, PAGE_SIZE, SEARCH_LIMIT
+from bot.states import KeywordDialog
+from shared.constants import (
+    DEFAULT_RECENT_LIMIT,
+    PAGE_SIZE,
+    SEARCH_LIMIT,
+)
 from shared.db import Database
 from shared.models import MessageView
 from shared.repositories import user_state as state_repo
@@ -61,24 +70,29 @@ async def _run_db(action: Callable[..., T], *args: object) -> T:
 
 
 @router.message(Command("start"))
-async def start(message: Message) -> None:
+async def start(message: Message, state: FSMContext) -> None:
     """Обработать команду /start."""
 
+    await state.clear()
     await message.reply(START_MESSAGE, reply_markup=build_main_menu())
 
 
 @router.message(Command("menu"))
 @router.message(Command("help"))
-async def show_menu(message: Message) -> None:
+async def show_menu(message: Message, state: FSMContext) -> None:
     """Показать меню команд."""
 
+    await state.clear()
     await message.reply(MENU_MESSAGE, reply_markup=build_main_menu())
 
 
 @router.message(Command("recent"))
-async def recent(message: Message, command: CommandObject, db: Database) -> None:
+async def recent(
+    message: Message, command: CommandObject, db: Database, state: FSMContext
+) -> None:
     """Обработать команду /recent."""
 
+    await state.clear()
     limit = DEFAULT_RECENT_LIMIT
     if command.args:
         candidate = command.args.split(maxsplit=1)[0]
@@ -110,73 +124,94 @@ async def recent(message: Message, command: CommandObject, db: Database) -> None
 
 @router.message(Command("add_keyword"))
 async def add_keyword(
-    message: Message, command: CommandObject, keyword_service: KeywordService, db: Database
+    message: Message,
+    command: CommandObject,
+    keyword_service: KeywordService,
+    db: Database,
+    state: FSMContext,
 ) -> None:
     """Обработать команду /add_keyword."""
 
+    await state.clear()
     keyword = (command.args or "").strip()
     if not keyword:
-        await message.reply(ADD_KEYWORD_USAGE)
+        await state.set_state(KeywordDialog.waiting_for_add)
+        await message.reply(ADD_KEYWORD_PROMPT, reply_markup=build_main_menu())
         return
 
-    user_id = _get_user_id(message)
-    if user_id is None:
+    await _handle_add_keyword(message, keyword_service, db, keyword)
+
+
+@router.message(KeywordDialog.waiting_for_add, F.text, ~F.text.startswith("/"))
+async def add_keyword_from_text(
+    message: Message, keyword_service: KeywordService, db: Database, state: FSMContext
+) -> None:
+    """Добавить ключевое слово из следующего сообщения."""
+
+    keyword = (message.text or "").strip()
+    if not keyword:
+        await message.reply(KEYWORD_EMPTY_MESSAGE)
         return
 
-    try:
-        added = await _run_db(keyword_service.add_keyword, user_id, keyword)
-    except psycopg2.Error as exc:
-        logger.error("Ошибка БД при /add_keyword: %s", exc)
-        await message.reply(DB_ERROR_MESSAGE)
-        return
+    await _handle_add_keyword(message, keyword_service, db, keyword)
+    await state.clear()
 
-    keyword_display = keyword.strip()
-    reply_text = (
-        KEYWORD_ADDED_MESSAGE.format(keyword=keyword_display)
-        if added
-        else KEYWORD_EXISTS_MESSAGE.format(keyword=keyword_display)
-    )
-    await message.reply(reply_text)
 
-    if added:
-        await _initialize_user_state(db, user_id)
+@router.message(KeywordDialog.waiting_for_add, ~F.text)
+async def add_keyword_non_text(message: Message) -> None:
+    """Сообщить о некорректном вводе ключевого слова."""
+
+    await message.reply(KEYWORD_EMPTY_MESSAGE)
 
 
 @router.message(Command("remove_keyword"))
 async def remove_keyword(
-    message: Message, command: CommandObject, keyword_service: KeywordService
+    message: Message,
+    command: CommandObject,
+    keyword_service: KeywordService,
+    state: FSMContext,
 ) -> None:
     """Обработать команду /remove_keyword."""
 
+    await state.clear()
     keyword = (command.args or "").strip()
     if not keyword:
-        await message.reply(REMOVE_KEYWORD_USAGE)
+        await state.set_state(KeywordDialog.waiting_for_remove)
+        await message.reply(REMOVE_KEYWORD_PROMPT, reply_markup=build_main_menu())
         return
 
-    user_id = _get_user_id(message)
-    if user_id is None:
+    await _handle_remove_keyword(message, keyword_service, keyword)
+
+
+@router.message(KeywordDialog.waiting_for_remove, F.text, ~F.text.startswith("/"))
+async def remove_keyword_from_text(
+    message: Message, keyword_service: KeywordService, state: FSMContext
+) -> None:
+    """Удалить ключевое слово из следующего сообщения."""
+
+    keyword = (message.text or "").strip()
+    if not keyword:
+        await message.reply(KEYWORD_EMPTY_MESSAGE)
         return
 
-    try:
-        removed = await _run_db(keyword_service.remove_keyword, user_id, keyword)
-    except psycopg2.Error as exc:
-        logger.error("Ошибка БД при /remove_keyword: %s", exc)
-        await message.reply(DB_ERROR_MESSAGE)
-        return
+    await _handle_remove_keyword(message, keyword_service, keyword)
+    await state.clear()
 
-    keyword_display = keyword.strip()
-    reply_text = (
-        KEYWORD_REMOVED_MESSAGE.format(keyword=keyword_display)
-        if removed
-        else KEYWORD_NOT_FOUND_MESSAGE.format(keyword=keyword_display)
-    )
-    await message.reply(reply_text)
+
+@router.message(KeywordDialog.waiting_for_remove, ~F.text)
+async def remove_keyword_non_text(message: Message) -> None:
+    """Сообщить о некорректном вводе ключевого слова."""
+
+    await message.reply(KEYWORD_EMPTY_MESSAGE)
 
 
 @router.message(Command("list_keywords"))
-async def list_keywords(message: Message, keyword_service: KeywordService) -> None:
+async def list_keywords(
+    message: Message, keyword_service: KeywordService, state: FSMContext
+) -> None:
     """Обработать команду /list_keywords."""
 
+    await state.clear()
     user_id = _get_user_id(message)
     if user_id is None:
         return
@@ -197,9 +232,12 @@ async def list_keywords(message: Message, keyword_service: KeywordService) -> No
 
 
 @router.message(Command("search"))
-async def search(message: Message, db: Database, keyword_service: KeywordService) -> None:
+async def search(
+    message: Message, db: Database, keyword_service: KeywordService, state: FSMContext
+) -> None:
     """Обработать команду /search."""
 
+    await state.clear()
     user_id = _get_user_id(message)
     if user_id is None:
         return
@@ -229,15 +267,89 @@ async def search(message: Message, db: Database, keyword_service: KeywordService
         await message.reply(NO_RESULTS_MESSAGE)
         return
 
-    await message.reply(SEARCH_RESULTS_HEADER.format(count=len(messages)))
-    await _send_paginated(message, messages)
+    sent_count, failed_count = await _send_paginated(message, messages, keywords=keywords)
+    summary = SEARCH_RESULTS_HEADER.format(found=len(messages), sent=sent_count)
+    if failed_count:
+        summary += SEARCH_RESULTS_ERROR_SUFFIX.format(failed=failed_count)
+    await message.reply(summary)
 
 
-async def _send_paginated(message: Message, messages: List[MessageView]) -> None:
+async def _handle_add_keyword(
+    message: Message, keyword_service: KeywordService, db: Database, keyword: str
+) -> None:
+    user_id = _get_user_id(message)
+    if user_id is None:
+        return
+
+    try:
+        added = await _run_db(keyword_service.add_keyword, user_id, keyword)
+    except psycopg2.Error as exc:
+        logger.error("Ошибка БД при /add_keyword: %s", exc)
+        await message.reply(DB_ERROR_MESSAGE)
+        return
+
+    keyword_display = keyword.strip()
+    reply_text = (
+        KEYWORD_ADDED_MESSAGE.format(keyword=keyword_display)
+        if added
+        else KEYWORD_EXISTS_MESSAGE.format(keyword=keyword_display)
+    )
+    await message.reply(reply_text)
+
+    if added:
+        await _initialize_user_state(db, user_id)
+
+
+async def _handle_remove_keyword(
+    message: Message, keyword_service: KeywordService, keyword: str
+) -> None:
+    user_id = _get_user_id(message)
+    if user_id is None:
+        return
+
+    try:
+        removed = await _run_db(keyword_service.remove_keyword, user_id, keyword)
+    except psycopg2.Error as exc:
+        logger.error("Ошибка БД при /remove_keyword: %s", exc)
+        await message.reply(DB_ERROR_MESSAGE)
+        return
+
+    keyword_display = keyword.strip()
+    reply_text = (
+        KEYWORD_REMOVED_MESSAGE.format(keyword=keyword_display)
+        if removed
+        else KEYWORD_NOT_FOUND_MESSAGE.format(keyword=keyword_display)
+    )
+    await message.reply(reply_text)
+
+
+async def _send_paginated(
+    message: Message,
+    messages: List[MessageView],
+    keywords: List[str] | None = None,
+) -> tuple[int, int]:
+    sent_count = 0
+    failed_count = 0
     for offset in range(0, len(messages), PAGE_SIZE):
         page = messages[offset : offset + PAGE_SIZE]
         for item in page:
-            await send_message_with_media(message.bot, message.chat.id, item)
+            try:
+                await send_message_with_media(
+                    message.bot,
+                    message.chat.id,
+                    item,
+                    keywords=keywords,
+                )
+                sent_count += 1
+            except TelegramAPIError as exc:
+                failed_count += 1
+                logger.warning(
+                    "Ошибка Telegram при отправке сообщения %s пользователю %s: %s",
+                    item.db_id,
+                    message.chat.id,
+                    exc,
+                )
+    return sent_count, failed_count
 
 
 async def _initialize_user_state(db: Database, user_id: int) -> None:

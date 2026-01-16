@@ -5,16 +5,19 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Sequence
 from urllib.parse import quote
 
 from bot.constants import (
     HEADER_CHAT_LABEL,
     HEADER_LINKS_LABEL,
+    HEADER_MATCH_LABEL,
     HEADER_SENDER_LABEL,
     HEADER_TIME_LABEL,
     HEADER_TYPE_LABEL,
+    KEYWORD_HIGHLIGHT_TEMPLATE,
     KEYWORDS_LIST_HEADER,
     KEYWORDS_LIST_ITEM_TEMPLATE,
     MESSAGE_SEPARATOR,
@@ -39,7 +42,11 @@ class MediaContent:
     caption: Optional[str]
 
 
-def format_message(message: MessageView, force_links: bool = False) -> str:
+def format_message(
+    message: MessageView,
+    force_links: bool = False,
+    keywords: Optional[Sequence[str]] = None,
+) -> str:
     """Отформатировать одно сообщение для отображения."""
 
     text = (message.text or "").strip()
@@ -53,12 +60,13 @@ def format_message(message: MessageView, force_links: bool = False) -> str:
     if message_type == "текст" and text:
         message_type = None
 
-    lines = _format_header(message, message_type)
+    highlighted, matched_keywords = _highlight_text(text or caption, keywords)
+    lines = _format_header(message, message_type, matched_keywords)
 
     content = text or caption
     body: List[str] = []
     if content:
-        body.append(_escape(content))
+        body.append(highlighted)
 
     if links and (force_links or (not content and media is None)):
         body.append(_format_links(links))
@@ -70,17 +78,22 @@ def format_message(message: MessageView, force_links: bool = False) -> str:
     return "\n".join(lines)
 
 
-def format_message_caption(message: MessageView, fallback_caption: Optional[str]) -> str:
+def format_message_caption(
+    message: MessageView,
+    fallback_caption: Optional[str],
+    keywords: Optional[Sequence[str]] = None,
+) -> str:
     """Сформировать подпись для медиа-сообщения."""
 
     text = (message.text or "").strip()
     caption = text or (fallback_caption or "").strip()
     message_type = _extract_media_type(message.metadata)
 
-    lines = _format_header(message, message_type)
+    highlighted, matched_keywords = _highlight_text(caption, keywords)
+    lines = _format_header(message, message_type, matched_keywords)
     if caption:
         lines.append(MESSAGE_SEPARATOR)
-        lines.append(_escape(caption))
+        lines.append(highlighted)
     return "\n".join(lines)
 
 
@@ -104,7 +117,9 @@ def format_keywords_list(keywords: Iterable[str]) -> str:
     return "\n".join(lines)
 
 
-def _format_header(message: MessageView, message_type: Optional[str]) -> List[str]:
+def _format_header(
+    message: MessageView, message_type: Optional[str], matched_keywords: List[str]
+) -> List[str]:
     timestamp = message.timestamp.strftime(DATETIME_FORMAT)
     chat_title = _extract_chat_title(message.metadata)
     if not chat_title:
@@ -120,6 +135,8 @@ def _format_header(message: MessageView, message_type: Optional[str]) -> List[st
     lines.append(_format_label(HEADER_TIME_LABEL, timestamp))
     if message_type:
         lines.append(_format_label(HEADER_TYPE_LABEL, message_type))
+    if matched_keywords:
+        lines.append(_format_label(HEADER_MATCH_LABEL, ", ".join(matched_keywords)))
     return lines
 
 
@@ -140,6 +157,64 @@ def _escape(value: str) -> str:
 
 def _normalize_keyword(keyword: str) -> str:
     return " ".join(keyword.strip().split())
+
+
+def _highlight_text(
+    content: str,
+    keywords: Optional[Sequence[str]],
+) -> tuple[str, List[str]]:
+    if not content:
+        return "", []
+    prepared = _prepare_keywords(keywords)
+    if not prepared:
+        return _escape(content), []
+
+    pattern, group_map = _build_keyword_pattern(prepared)
+    matched_keywords: List[str] = []
+    parts: List[str] = []
+    last_index = 0
+    for match in pattern.finditer(content):
+        parts.append(_escape(content[last_index : match.start()]))
+        parts.append(KEYWORD_HIGHLIGHT_TEMPLATE.format(text=_escape(match.group(0))))
+        last_index = match.end()
+        group_name = match.lastgroup
+        if group_name:
+            keyword = group_map.get(group_name)
+            if keyword and keyword not in matched_keywords:
+                matched_keywords.append(keyword)
+    parts.append(_escape(content[last_index:]))
+    return "".join(parts), matched_keywords
+
+
+def _prepare_keywords(keywords: Optional[Sequence[str]]) -> List[str]:
+    if not keywords:
+        return []
+    prepared: List[str] = []
+    seen = set()
+    for keyword in keywords:
+        normalized = _normalize_keyword(keyword)
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        prepared.append(normalized)
+    return prepared
+
+
+def _build_keyword_pattern(
+    keywords: Sequence[str],
+) -> tuple[re.Pattern[str], dict[str, str]]:
+    sorted_keywords = sorted(keywords, key=len, reverse=True)
+    group_map: dict[str, str] = {}
+    parts: List[str] = []
+    for index, keyword in enumerate(sorted_keywords):
+        group_name = f"kw{index}"
+        group_map[group_name] = keyword
+        parts.append(f"(?P<{group_name}>{re.escape(keyword)})")
+    pattern = re.compile("|".join(parts), re.IGNORECASE)
+    return pattern, group_map
 
 
 def _extract_chat_title(metadata: Any) -> Optional[str]:

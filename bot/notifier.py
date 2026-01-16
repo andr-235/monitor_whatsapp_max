@@ -164,7 +164,7 @@ async def _notify_user(
             if not has_displayable_content(message):
                 continue
             try:
-                await send_message_with_media(bot, user_id, message)
+                await send_message_with_media(bot, user_id, message, keywords=keywords)
             except TelegramForbiddenError:
                 logger.info("Пользователь %s заблокировал бота", user_id)
                 return

@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict
 
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.handlers import router as bot_router
 from bot.keyword_service import KeywordService
@@ -41,7 +42,7 @@ async def _run_bot() -> None:
         await setup_bot_commands(bot)
     except Exception as exc:  # noqa: BLE001 - логируем и продолжаем
         logger.warning("Не удалось обновить меню команд: %s", exc)
-    dispatcher = Dispatcher()
+    dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(bot_router)
 
     started_at = datetime.utcnow()

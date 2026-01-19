@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Callable, List, TypeVar
 
 import psycopg2
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
+from loguru import logger as base_logger
 
 from bot.formatting import has_displayable_content
 from bot.message_sender import send_message_with_media
@@ -19,7 +19,7 @@ from shared.repositories import keywords as keyword_repo
 from shared.repositories import messages as message_repo
 from shared.repositories import user_state as state_repo
 
-logger = logging.getLogger(__name__)
+logger = base_logger.bind(component=__name__)
 
 T = TypeVar("T")
 
@@ -50,7 +50,7 @@ async def poll_and_notify(bot: Bot, db: Database) -> None:
     try:
         users = await _run_db(state_repo.list_users_with_keywords, db)
     except psycopg2.Error as exc:
-        logger.error("Ошибка БД при получении пользователей: %s", exc)
+        logger.error("Ошибка БД при получении пользователей: {}", exc)
         return
 
     if not users:
@@ -91,7 +91,7 @@ async def _poll_provider(
     try:
         max_id = await _run_db(get_max_id, db)
     except psycopg2.Error as exc:
-        logger.error("Ошибка БД при получении max id (%s): %s", provider_label, exc)
+        logger.error("Ошибка БД при получении max id ({}): {}", provider_label, exc)
         return
 
     if max_id <= 0:
@@ -123,14 +123,14 @@ async def _poll_provider(
             await _run_db(upsert_last_seen, db, user_id, max_id)
         except psycopg2.Error as exc:
             logger.error(
-                "Ошибка БД при обработке пользователя %s (%s): %s",
+                "Ошибка БД при обработке пользователя {} ({}): {}",
                 user_id,
                 provider_label,
                 exc,
             )
         except TelegramAPIError as exc:
             logger.warning(
-                "Ошибка Telegram при отправке пользователю %s (%s): %s",
+                "Ошибка Telegram при отправке пользователю {} ({}): {}",
                 user_id,
                 provider_label,
                 exc,
@@ -166,9 +166,9 @@ async def _notify_user(
             try:
                 await send_message_with_media(bot, user_id, message, keywords=keywords)
             except TelegramForbiddenError:
-                logger.info("Пользователь %s заблокировал бота", user_id)
+                logger.info("Пользователь {} заблокировал бота", user_id)
                 return
             except TelegramBadRequest as exc:
-                logger.warning("Некорректный запрос Telegram для %s: %s", user_id, exc)
+                logger.warning("Некорректный запрос Telegram для {}: {}", user_id, exc)
                 return
         current = messages[-1].db_id

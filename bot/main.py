@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-import logging
 from datetime import datetime
 from typing import Dict
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from loguru import logger as base_logger
 
 from bot.handlers import router as bot_router
 from bot.keyword_service import KeywordService
@@ -21,6 +21,8 @@ from shared.db import Database
 from shared.health import HealthServer
 from shared.logging_config import configure_logging
 
+logger = base_logger.bind(component=__name__)
+
 
 async def _run_bot() -> None:
     """Запустить Telegram-бота с долгим опросом."""
@@ -28,20 +30,19 @@ async def _run_bot() -> None:
     load_environment()
     config = load_bot_config()
     configure_logging(config.log_level)
-    logger = logging.getLogger("bot.main")
 
     db = Database(config.database)
     try:
         db.connect()
     except Exception as exc:  # noqa: BLE001 - логируем и продолжаем
-        logger.warning("Не удалось подключиться к БД при старте: %s", exc)
+        logger.warning("Не удалось подключиться к БД при старте: {}", exc)
 
     keyword_service = KeywordService(db)
     bot = Bot(token=config.telegram.bot_token)
     try:
         await setup_bot_commands(bot)
     except Exception as exc:  # noqa: BLE001 - логируем и продолжаем
-        logger.warning("Не удалось обновить меню команд: %s", exc)
+        logger.warning("Не удалось обновить меню команд: {}", exc)
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(bot_router)
 

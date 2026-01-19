@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Sequence
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
+from loguru import logger as base_logger
 
 from bot.constants import TELEGRAM_CAPTION_LIMIT, TELEGRAM_MESSAGE_LIMIT
 from bot.formatting import extract_media, format_message, format_message_caption
 from shared.models import MessageView
 
-logger = logging.getLogger(__name__)
+logger = base_logger.bind(component=__name__)
 
 
 async def send_message_with_media(
@@ -103,7 +103,7 @@ async def send_message_with_media(
             await _send_caption_tail(bot, chat_id, caption_tail)
             return
     except TelegramBadRequest as exc:
-        logger.warning("Failed to send media to chat %s: %s", chat_id, exc)
+        logger.warning("Failed to send media to chat {}: {}", chat_id, exc)
 
     has_text = bool((message.text or "").strip())
     has_caption = bool((media.caption or "").strip())
@@ -131,7 +131,7 @@ async def _send_text_chunks(bot: Bot, chat_id: int, text: str) -> None:
                 parse_mode=ParseMode.HTML,
             )
         except TelegramBadRequest as exc:
-            logger.warning("Failed to send HTML chunk to chat %s: %s", chat_id, exc)
+            logger.warning("Failed to send HTML chunk to chat {}: {}", chat_id, exc)
             plain = _strip_html(chunk)
             await bot.send_message(chat_id=chat_id, text=plain)
 

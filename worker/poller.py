@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from threading import Event
 from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Set
 
 import psycopg2
+from loguru import logger as base_logger
 
 from shared.constants import DATETIME_FORMAT, PROVIDER_WAPPI
 from shared.db import Database
@@ -16,6 +16,8 @@ from worker.buffer import MessageBuffer
 
 InsertMessagesFn = Callable[[Database, Iterable[MessageRecord]], int]
 GetLatestTimestampFn = Callable[[Database], Optional[int]]
+
+logger = base_logger.bind(component=__name__)
 
 
 class MessageClient(Protocol):
@@ -53,7 +55,7 @@ class Poller:
         self._get_latest_message_timestamp = get_latest_timestamp_fn
         self._skipped_chat_ids = set(skipped_chat_ids or set())
         self._provider = provider
-        self._logger = logging.getLogger(self.__class__.__name__)
+        self._logger = logger.bind(component=f"{__name__}.{self.__class__.__name__}")
         self._last_poll_started_at: Optional[datetime] = None
         self._last_poll_success_at: Optional[datetime] = None
         self._last_message_ts: Optional[int] = None
@@ -66,14 +68,14 @@ class Poller:
             self._last_poll_started_at = datetime.utcnow()
             cycle_started = self._last_poll_started_at
             self._logger.info(
-                "Цикл опроса стартовал в %s",
+                "Цикл опроса стартовал в {}",
                 cycle_started.strftime(DATETIME_FORMAT),
             )
             success = self._poll_once()
             if success:
                 self._last_poll_success_at = datetime.utcnow()
             self._logger.info(
-                "Цикл опроса завершен статус=%s буфер=%s",
+                "Цикл опроса завершен статус={} буфер={}",
                 "успех" if success else "ошибка",
                 self._buffer.size(),
             )
@@ -101,12 +103,12 @@ class Poller:
             try:
                 self._last_message_ts = self._get_latest_message_timestamp(self._db)
             except psycopg2.Error as exc:
-                self._logger.warning("Не удалось загрузить время последнего сообщения: %s", exc)
+                self._logger.warning("Не удалось загрузить время последнего сообщения: {}", exc)
 
         try:
             chats = self._client.list_chats()
         except Exception as exc:  # noqa: BLE001 - широкая ошибка, чтобы цикл не падал
-            self._logger.error("Не удалось получить список чатов: %s", exc)
+            self._logger.error("Не удалось получить список чатов: {}", exc)
             return False
 
         for chat in chats:
@@ -123,7 +125,7 @@ class Poller:
                 messages = self._client.list_messages(chat_id, time_from=time_from)
                 self._process_messages(chat_id, chat_name, participants_map, messages)
             except Exception as exc:  # noqa: BLE001 - продолжаем опрос других чатов
-                self._logger.error("Не удалось обработать чат %s: %s", chat_id, exc)
+                self._logger.error("Не удалось обработать чат {}: {}", chat_id, exc)
                 success = False
         if self._force_full_sync:
             self._force_full_sync = False
@@ -152,7 +154,7 @@ class Poller:
             inserted_total += self._store_messages(batch)
 
         if inserted_total:
-            self._logger.info("Сохранено %s сообщений для чата %s", inserted_total, chat_id)
+            self._logger.info("Сохранено {} сообщений для чата {}", inserted_total, chat_id)
 
     def _store_messages(self, messages: List[MessageRecord]) -> int:
         try:
@@ -161,8 +163,8 @@ class Poller:
         except psycopg2.Error as exc:
             dropped = self._buffer.add(messages)
             if dropped:
-                self._logger.warning("Буфер переполнен, отброшено %s сообщений", dropped)
-            self._logger.error("Ошибка БД, буферизация %s сообщений: %s", len(messages), exc)
+                self._logger.warning("Буфер переполнен, отброшено {} сообщений", dropped)
+            self._logger.error("Ошибка БД, буферизация {} сообщений: {}", len(messages), exc)
             return 0
 
     def _flush_buffer(self) -> bool:
@@ -172,10 +174,10 @@ class Poller:
         try:
             inserted = self._insert_messages(self._db, buffered)
             self._buffer.drain()
-            self._logger.info("Сброшено в БД %s сообщений из буфера", inserted)
+            self._logger.info("Сброшено в БД {} сообщений из буфера", inserted)
             return True
         except psycopg2.Error as exc:
-            self._logger.warning("Не удалось сбросить буфер: %s", exc)
+            self._logger.warning("Не удалось сбросить буфер: {}", exc)
             return False
 
     def _calculate_time_from(self) -> Optional[int]:
@@ -207,7 +209,7 @@ class Poller:
         timestamp = self._coerce_timestamp(timestamp_value)
 
         if not message_id or not chat_id or timestamp is None:
-            self._logger.warning("Пропуск сообщения с отсутствующими полями: %s", payload)
+            self._logger.warning("Пропуск сообщения с отсутствующими полями: {}", payload)
             return None
 
         sender = self._normalize_sender(sender, participants_map)

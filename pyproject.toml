@@ -17,6 +17,7 @@ aiogram = "^3.4.1"
 python-dotenv = "^1.0.1"
 alembic = "^1.13.1"
 SQLAlchemy = "^2.0.25"
+loguru = "^0.7.3"
 
 [tool.poetry.scripts]
 worker = "worker.main:main"

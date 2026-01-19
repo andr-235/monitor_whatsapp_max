@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
+from loguru import logger as base_logger
 
 from shared.config import MaxConfig
 from shared.constants import (
@@ -16,6 +16,8 @@ from shared.constants import (
     MAX_MESSAGE_DATE_FORMAT,
 )
 from shared.retry import backoff_delays
+
+logger = base_logger.bind(component=__name__)
 
 
 class RetryableMaxError(RuntimeError):
@@ -26,7 +28,7 @@ class MaxClient:
     """HTTP client for Max API."""
 
     def __init__(self, config: MaxConfig) -> None:
-        self._logger = logging.getLogger(self.__class__.__name__)
+        self._logger = logger.bind(component=f"{__name__}.{self.__class__.__name__}")
         self._profile_id = config.profile_id
         self._page_size = config.page_size
         self._include_system_messages = config.include_system_messages
@@ -139,14 +141,14 @@ class MaxClient:
                 return response.json()
             except (httpx.TimeoutException, httpx.TransportError, RetryableMaxError) as exc:
                 self._logger.warning(
-                    "API request failed (%s). Retry in %ss", exc, delay
+                    "API request failed ({}). Retry in {}s", exc, delay
                 )
                 time.sleep(delay)
             except httpx.HTTPStatusError as exc:
-                self._logger.error("Non-retryable API error: %s", exc)
+                self._logger.error("Non-retryable API error: {}", exc)
                 raise
             except ValueError as exc:
-                self._logger.error("Failed to parse API response: %s", exc)
+                self._logger.error("Failed to parse API response: {}", exc)
                 raise
         raise RuntimeError("Retry loop finished unexpectedly")
 

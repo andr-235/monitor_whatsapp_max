@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import httpx
+from loguru import logger as base_logger
 
 from shared.config import WappiConfig
 from shared.constants import (
@@ -16,6 +16,8 @@ from shared.constants import (
     WAPPI_MESSAGE_DATE_FORMAT,
 )
 from shared.retry import backoff_delays
+
+logger = base_logger.bind(component=__name__)
 
 
 class RetryableWappiError(RuntimeError):
@@ -26,7 +28,7 @@ class WappiClient:
     """HTTP-клиент для Wappi API."""
 
     def __init__(self, config: WappiConfig) -> None:
-        self._logger = logging.getLogger(self.__class__.__name__)
+        self._logger = logger.bind(component=f"{__name__}.{self.__class__.__name__}")
         self._profile_id = config.profile_id
         self._page_size = config.page_size
         self._include_system_messages = config.include_system_messages
@@ -136,14 +138,14 @@ class WappiClient:
                 return response.json()
             except (httpx.TimeoutException, httpx.TransportError, RetryableWappiError) as exc:
                 self._logger.warning(
-                    "Запрос к API не удался (%s). Повтор через %sс", exc, delay
+                    "Запрос к API не удался ({}). Повтор через {}с", exc, delay
                 )
                 time.sleep(delay)
             except httpx.HTTPStatusError as exc:
-                self._logger.error("Неретраимая ошибка API: %s", exc)
+                self._logger.error("Неретраимая ошибка API: {}", exc)
                 raise
             except ValueError as exc:
-                self._logger.error("Не удалось разобрать ответ API: %s", exc)
+                self._logger.error("Не удалось разобрать ответ API: {}", exc)
                 raise
         raise RuntimeError("Цикл ретраев завершился неожиданно")
 

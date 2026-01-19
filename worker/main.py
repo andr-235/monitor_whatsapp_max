@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 import signal
 from threading import Event, Thread
 from types import FrameType
 from typing import Dict, Optional
+
+from loguru import logger as base_logger
 
 from shared.config import load_environment, load_worker_config
 from shared.constants import PROVIDER_MAX, PROVIDER_WAPPI, WAPPI_SKIPPED_CHAT_IDS
@@ -19,6 +20,8 @@ from worker.poller import Poller
 from worker.max_client import MaxClient
 from worker.wappi_client import WappiClient
 
+logger = base_logger.bind(component=__name__)
+
 
 def main() -> None:
     """Запустить worker для опроса WhatsApp и Max."""
@@ -26,13 +29,12 @@ def main() -> None:
     load_environment()
     config = load_worker_config()
     configure_logging(config.log_level)
-    logger = logging.getLogger("worker.main")
 
     db = Database(config.database)
     try:
         db.connect()
     except Exception as exc:  # noqa: BLE001 - логируем и продолжаем с буфером
-        logger.warning("Не удалось подключиться к БД при старте: %s", exc)
+        logger.warning("Не удалось подключиться к БД при старте: {}", exc)
 
     wappi = WappiClient(config.wappi)
     max_client = MaxClient(config.max_api)
@@ -63,7 +65,7 @@ def main() -> None:
     stop_event = Event()
 
     def handle_signal(signum: int, _frame: Optional[FrameType]) -> None:
-        logger.info("Получен сигнал %s, завершение работы", signum)
+        logger.info("Получен сигнал {}, завершение работы", signum)
         stop_event.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):

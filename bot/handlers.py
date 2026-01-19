@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Callable, List, TypeVar
 
 import psycopg2
@@ -13,6 +12,7 @@ from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from aiogram.exceptions import TelegramAPIError
+from loguru import logger as base_logger
 
 from bot.constants import (
     ADD_KEYWORD_PROMPT,
@@ -52,7 +52,7 @@ from shared.repositories.messages import (
     search_messages_by_keywords_combined,
 )
 
-logger = logging.getLogger(__name__)
+logger = base_logger.bind(component=__name__)
 
 router = Router()
 
@@ -109,7 +109,7 @@ async def recent(
     try:
         messages = await _run_db(get_recent_messages_combined, db, limit, 0)
     except psycopg2.Error as exc:
-        logger.error("Ошибка БД при /recent: %s", exc)
+        logger.error("Ошибка БД при /recent: {}", exc)
         await message.reply(DB_ERROR_MESSAGE)
         return
 
@@ -219,7 +219,7 @@ async def list_keywords(
     try:
         keywords = await _run_db(keyword_service.list_keywords, user_id)
     except psycopg2.Error as exc:
-        logger.error("Ошибка БД при /list_keywords: %s", exc)
+        logger.error("Ошибка БД при /list_keywords: {}", exc)
         await message.reply(DB_ERROR_MESSAGE)
         return
 
@@ -245,7 +245,7 @@ async def search(
     try:
         keywords = await _run_db(keyword_service.list_keywords, user_id)
     except psycopg2.Error as exc:
-        logger.error("Ошибка БД при /search (ключевые слова): %s", exc)
+        logger.error("Ошибка БД при /search (ключевые слова): {}", exc)
         await message.reply(DB_ERROR_MESSAGE)
         return
 
@@ -258,7 +258,7 @@ async def search(
             search_messages_by_keywords_combined, db, keywords, SEARCH_LIMIT, 0
         )
     except psycopg2.Error as exc:
-        logger.error("Ошибка БД при /search: %s", exc)
+        logger.error("Ошибка БД при /search: {}", exc)
         await message.reply(DB_ERROR_MESSAGE)
         return
 
@@ -284,7 +284,7 @@ async def _handle_add_keyword(
     try:
         added = await _run_db(keyword_service.add_keyword, user_id, keyword)
     except psycopg2.Error as exc:
-        logger.error("Ошибка БД при /add_keyword: %s", exc)
+        logger.error("Ошибка БД при /add_keyword: {}", exc)
         await message.reply(DB_ERROR_MESSAGE)
         return
 
@@ -310,7 +310,7 @@ async def _handle_remove_keyword(
     try:
         removed = await _run_db(keyword_service.remove_keyword, user_id, keyword)
     except psycopg2.Error as exc:
-        logger.error("Ошибка БД при /remove_keyword: %s", exc)
+        logger.error("Ошибка БД при /remove_keyword: {}", exc)
         await message.reply(DB_ERROR_MESSAGE)
         return
 
@@ -344,7 +344,7 @@ async def _send_paginated(
             except TelegramAPIError as exc:
                 failed_count += 1
                 logger.warning(
-                    "Ошибка Telegram при отправке сообщения %s пользователю %s: %s",
+                    "Ошибка Telegram при отправке сообщения {} пользователю {}: {}",
                     item.db_id,
                     message.chat.id,
                     exc,
@@ -365,4 +365,4 @@ async def _initialize_user_state(db: Database, user_id: int) -> None:
                 state_repo.upsert_last_seen_message_max_id, db, user_id, max_id_max
             )
     except psycopg2.Error as exc:
-        logger.warning("Не удалось инициализировать состояние пользователя %s: %s", user_id, exc)
+        logger.warning("Не удалось инициализировать состояние пользователя {}: {}", user_id, exc)

@@ -9,6 +9,12 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      default:
+      monitor_net:
+        aliases:
+          - monitor-db
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -17,7 +23,16 @@ services:
 
   migrations:
     build: .
-    command: ["poetry", "run", "alembic", "-c", "database/alembic.ini", "upgrade", "head"]
+    command:
+      [
+        "poetry",
+        "run",
+        "alembic",
+        "-c",
+        "database/alembic.ini",
+        "upgrade",
+        "head",
+      ]
     env_file: .env
     depends_on:
       postgres:
@@ -51,3 +66,8 @@ services:
 
 volumes:
   postgres_data:
+
+networks:
+  monitor_net:
+    external: true
+    name: monitor_whatsapp_max_default

@@ -40,7 +40,7 @@ def configure_logging(log_level: str) -> None:
         sys.stdout,
         level=log_level,
         format=LOG_FORMAT,
-        colorize=False,
+        colorize=True,
         backtrace=False,
         diagnose=False,
     )

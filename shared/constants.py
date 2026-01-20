@@ -5,7 +5,12 @@ DEFAULT_BOT_POLL_INTERVAL = 60
 DEFAULT_REQUEST_TIMEOUT = 30
 DEFAULT_PAGE_SIZE = 100
 DEFAULT_LOG_LEVEL = "INFO"
-LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} {level} {extra[component]} {message}"
+LOG_FORMAT = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+    "<level>{level: <8}</level> | "
+    "<cyan>{extra[component]}</cyan> | "
+    "{message}"
+)
 DEFAULT_RECENT_LIMIT = 10
 PAGE_SIZE = 10
 SEARCH_LIMIT = 50
